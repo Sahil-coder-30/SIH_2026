@@ -2,12 +2,17 @@ import Shopkeeper from '../models/shopkeeper.model.js';
 import { PackEvent, Inventory } from '../models/inventory.model.js';
 import Transaction from '../models/transaction.model.js';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+const LOW_STOCK_THRESHOLD  = 10;
+const EXPIRY_ALERT_DAYS    = 30;
+
 // ── 4.1 Dashboard Stats ───────────────────────────────────────────────────────
 export const statsController = async (req, res) => {
     try {
         const shopkeeperId = req.user.id;
+        const thirtyDaysFromNow = new Date(Date.now() + EXPIRY_ALERT_DAYS * 24 * 60 * 60 * 1000);
 
-        const [totalScans, verifiedCount, suspiciousCount, counterfeitCount, todaySales] =
+        const [totalScans, verifiedCount, suspiciousCount, counterfeitCount, todaySales, lowStockCount, expiringSoonCount] =
             await Promise.all([
                 PackEvent.countDocuments({ shopkeeperId }),
                 PackEvent.countDocuments({ shopkeeperId, scanStatus: 'Verified' }),
@@ -18,6 +23,8 @@ export const statsController = async (req, res) => {
                     type: 'SELL',
                     createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) },
                 }),
+                Inventory.countDocuments({ shopkeeperId, currentStock: { $gt: 0, $lte: LOW_STOCK_THRESHOLD } }),
+                Inventory.countDocuments({ shopkeeperId, currentStock: { $gt: 0 }, expiryDate: { $lte: thirtyDaysFromNow, $gt: new Date() } }),
             ]);
 
         return res.status(200).json({
@@ -28,6 +35,8 @@ export const statsController = async (req, res) => {
                 suspiciousCount,
                 counterfeitCount,
                 todaySalesCount: todaySales,
+                lowStockCount,
+                expiringSoonCount,
             },
         });
     } catch (err) {
@@ -94,6 +103,9 @@ export const inventoryController = async (req, res) => {
 
         const items = await Inventory.find(filter).sort({ expiryDate: 1 }).lean();
 
+        const now = new Date();
+        const thirtyDaysFromNow = new Date(Date.now() + EXPIRY_ALERT_DAYS * 24 * 60 * 60 * 1000);
+
         const inventory = items.map((item) => ({
             id:           item._id.toString(),
             medicineName: item.medicineName,
@@ -103,6 +115,8 @@ export const inventoryController = async (req, res) => {
             receivedDate: item.receivedDate,
             status:       item.status || 'AVAILABLE',
             currentStock: item.currentStock,
+            isLowStock:    item.currentStock <= LOW_STOCK_THRESHOLD,
+            isExpiringSoon: item.expiryDate ? (item.expiryDate <= thirtyDaysFromNow && item.expiryDate > now) : false,
         }));
 
         return res.status(200).json({

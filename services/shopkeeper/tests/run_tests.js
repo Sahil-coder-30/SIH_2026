@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { extractTokenAndHash } from '../utils/qrParser.util.js';
 import app from '../app/app.js';
 
 let server;
@@ -44,6 +45,10 @@ const request = (path, method = 'GET', body = null, headers = {}) => {
     });
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 1: Health Probes
+// ═══════════════════════════════════════════════════════════════════════════════
+
 test('GET /healthz — returns 200 OK', async () => {
     const res = await request('/healthz');
     assert.equal(res.status, 200);
@@ -57,6 +62,10 @@ test('GET /readyz — returns 200 OK', async () => {
     assert.equal(res.body.status, 'ok');
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 2: Auth Endpoints — Validation
+// ═══════════════════════════════════════════════════════════════════════════════
+
 test('POST /api/shopkeeper/register — validation missing fields returns 400', async () => {
     const res = await request('/api/shopkeeper/register', 'POST', { shopName: 'Incomplete' });
     assert.equal(res.status, 400);
@@ -69,6 +78,46 @@ test('POST /api/shopkeeper/login — missing fields returns 400', async () => {
     assert.equal(res.status, 400);
     assert.equal(res.body.status, 'error');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 3: QR Parser Unit Tests (extractTokenAndHash)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test('extractTokenAndHash — raw JWT string returns signedToken, null packHash', () => {
+    const result = extractTokenAndHash('eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.test.sig');
+    assert.equal(result.signedToken, 'eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.test.sig');
+    assert.equal(result.packHash, null);
+});
+
+test('extractTokenAndHash — full verification URL extracts token and packHash', () => {
+    const url = 'https://pharmachain.gov.in/verify/a8f4c123abc?token=eyJhbGciOiJFUzI1NiJ9.payload.sig';
+    const result = extractTokenAndHash(url);
+    assert.equal(result.signedToken, 'eyJhbGciOiJFUzI1NiJ9.payload.sig');
+    assert.equal(result.packHash, 'a8f4c123abc');
+});
+
+test('extractTokenAndHash — URL without verify path still extracts token', () => {
+    const url = 'https://example.com/scan?token=eyJtest.payload.sig';
+    const result = extractTokenAndHash(url);
+    assert.equal(result.signedToken, 'eyJtest.payload.sig');
+    assert.equal(result.packHash, null);
+});
+
+test('extractTokenAndHash — URL missing token param throws', () => {
+    assert.throws(() => extractTokenAndHash('https://pharmachain.gov.in/verify/abc123'), {
+        message: /token/,
+    });
+});
+
+test('extractTokenAndHash — null/undefined input throws', () => {
+    assert.throws(() => extractTokenAndHash(null));
+    assert.throws(() => extractTokenAndHash(undefined));
+    assert.throws(() => extractTokenAndHash(''));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 4: Consumer Scan Endpoint (Public)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 test('POST /api/v1/scan/customer — missing qrData returns 400', async () => {
     const res = await request('/api/v1/scan/customer', 'POST', {});
@@ -84,8 +133,20 @@ test('POST /api/v1/scan/customer — invalid qr token returns Counterfeit', asyn
     assert.equal(res.body.data.trustScore, 0);
 });
 
+test('POST /api/v1/scan/customer — accepts verifyUrl format', async () => {
+    const res = await request('/api/v1/scan/customer', 'POST', {
+        verifyUrl: 'https://pharmachain.gov.in/verify/abc123?token=invalid-token',
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.scanStatus, 'Counterfeit');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 5: Authenticated Endpoints — Auth Guard
+// ═══════════════════════════════════════════════════════════════════════════════
+
 test('POST /api/medicine/scan — unauthenticated returns 401', async () => {
-    const res = await request('/api/medicine/scan', 'POST', { qrData: 'test' });
+    const res = await request('/api/medicine/scan', 'POST', { qrData: 'some-qr-token' });
     assert.equal(res.status, 401);
     assert.equal(res.body.status, 'error');
 });
@@ -119,6 +180,10 @@ test('POST /api/transactions/return — unauthenticated returns 401', async () =
     assert.equal(res.status, 401);
     assert.equal(res.body.status, 'error');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 6: 404 Handler
+// ═══════════════════════════════════════════════════════════════════════════════
 
 test('GET /unknown-route — 404 handler returns error status', async () => {
     const res = await request('/unknown-route');
