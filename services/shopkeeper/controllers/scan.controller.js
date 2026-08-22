@@ -1,17 +1,47 @@
 import { verifyToken, getPackStatus, recordIntake, recordSale } from '../services/coreClient.service.js';
 import { PackEvent, Inventory, EVENT_TYPE } from '../models/inventory.model.js';
 
+// ── URL & Token Parser Helper ──────────────────────────────────────────────────
+const extractTokenAndHash = (input) => {
+    if (!input || typeof input !== 'string') return { token: '', hash: '' };
+    
+    const raw = input.trim();
+    let token = raw;
+    let hash  = '';
+
+    if (raw.includes('/verify/')) {
+        const afterVerify = raw.split('/verify/')[1];
+        if (afterVerify) {
+            hash = afterVerify.split('?')[0].split('/')[0];
+        }
+    }
+
+    if (raw.includes('token=')) {
+        try {
+            const urlObj = new URL(raw.startsWith('http') ? raw : `https://pharmachain.gov.in/${raw}`);
+            token = urlObj.searchParams.get('token') || raw;
+        } catch {
+            const match = raw.match(/[?&]token=([^&]+)/);
+            if (match && match[1]) token = decodeURIComponent(match[1]);
+        }
+    }
+
+    return { token, hash };
+};
+
 // ── Controllers ───────────────────────────────────────────────────────────────
 
 export const intakeScanController = async (req, res) => {
     try {
-        const { signedToken } = req.body;
+        const rawInput = req.body.signedToken || req.body.qrData || req.body.token;
         const shopkeeperId = req.user.id;
         const operatorId = req.user.id;
 
-        if (!signedToken) {
-            return res.status(400).json({ status: 'error', message: 'signedToken is required' });
+        if (!rawInput) {
+            return res.status(400).json({ status: 'error', message: 'signedToken or qrData is required' });
         }
+
+        const { token: signedToken, hash: scannedHash } = extractTokenAndHash(rawInput);
 
         // ── Tier 1: Cryptographic signature verification ───────────────────────
         const verifyResult = await verifyToken(signedToken);
@@ -20,6 +50,7 @@ export const intakeScanController = async (req, res) => {
                 status: 'error',
                 code: 'INVALID_SIGNATURE',
                 message: 'Invalid QR code — cryptographic signature verification failed',
+                scannedHash: scannedHash || null,
             });
         }
 
@@ -59,11 +90,8 @@ export const intakeScanController = async (req, res) => {
         await Inventory.findOneAndUpdate(
             { shopkeeperId, batchId },
             {
-                $inc: { currentStock: 1 },
-                $setOnInsert: {
-                    medicineName: medicineName || `Batch ${batchId}`,
-                    expiryDate,
-                },
+                $inc: { packCount: 1 },
+                $setOnInsert: { shopkeeperId, batchId },
             },
             { upsert: true, new: true },
         );
@@ -84,13 +112,15 @@ export const intakeScanController = async (req, res) => {
 
 export const saleScanController = async (req, res) => {
     try {
-        const { signedToken } = req.body;
+        const rawInput = req.body.signedToken || req.body.qrData || req.body.token;
         const shopkeeperId = req.user.id;
         const operatorId = req.user.id;
 
-        if (!signedToken) {
-            return res.status(400).json({ status: 'error', message: 'signedToken is required' });
+        if (!rawInput) {
+            return res.status(400).json({ status: 'error', message: 'signedToken or qrData is required' });
         }
+
+        const { token: signedToken, hash: scannedHash } = extractTokenAndHash(rawInput);
 
         // ── Tier 1: Cryptographic signature verification ───────────────────────
         const verifyResult = await verifyToken(signedToken);
@@ -99,6 +129,7 @@ export const saleScanController = async (req, res) => {
                 status: 'error',
                 code: 'INVALID_SIGNATURE',
                 message: 'Invalid QR code — cryptographic signature verification failed',
+                scannedHash: scannedHash || null,
             });
         }
 
@@ -138,7 +169,7 @@ export const saleScanController = async (req, res) => {
         await recordSale({ packHash, shopId: shopkeeperId, operatorId });
 
         // ── Persist sale event and decrement inventory ────────────────────────
-        await PackEvent.create({ shopkeeperId, packHash, batchId, eventType: 'SALE', operatorId });
+        await PackEvent.create({ shopkeeperId, packHash, batchId, eventType: 'SOLD', operatorId });
 
         await Inventory.findOneAndUpdate(
             { shopkeeperId, batchId },

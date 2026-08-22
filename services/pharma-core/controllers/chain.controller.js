@@ -25,7 +25,9 @@ export const chainIntakeController = async (req, res) => {
 
         const now = new Date();
         const transition = {
-            hash: `${packHash}:INTAKE`,
+            packId: packHash,
+            eventType: 'INTAKE',
+            hash: `${packHash}~INTAKE`,
             fromId: manufacturerId,
             toId: shopId,
             sellingDate: formatDate(now),
@@ -69,7 +71,9 @@ export const chainSaleController = async (req, res) => {
 
         const now = new Date();
         const transition = {
-            hash: `${packHash}:SALE`,
+            packId: packHash,
+            eventType: 'SOLD',
+            hash: `${packHash}~SOLD`,
             fromId: shopId,
             toId: 'CONSUMER',
             sellingDate: formatDate(now),

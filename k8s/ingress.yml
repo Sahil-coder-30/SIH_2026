@@ -5,7 +5,6 @@ metadata:
   labels:
     app.kubernetes.io/name: pharma-ingress
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
@@ -15,8 +14,8 @@ spec:
   - http:
       paths:
       # ── Manufacturer Service Route ──────────────────────────────────────────
-      - path: /api/manufacturer(/|$)(.*)
-        pathType: ImplementationSpecific
+      - pathType: Prefix
+        path: "/api/manufacturer"
         backend:
           service:
             name: manufacturer-service
@@ -24,8 +23,8 @@ spec:
               number: 80
 
       # ── Shopkeeper Service Route ────────────────────────────────────────────
-      - path: /api/shopkeeper(/|$)(.*)
-        pathType: ImplementationSpecific
+      - pathType: Prefix
+        path: "/api/shopkeeper"
         backend:
           service:
             name: shopkeeper-service
@@ -33,8 +32,8 @@ spec:
               number: 80
 
       # ── Consumer Service Route ──────────────────────────────────────────────
-      - path: /api/consumer(/|$)(.*)
-        pathType: ImplementationSpecific
+      - pathType: Prefix
+        path: "/api/consumer"
         backend:
           service:
             name: consumer-service
@@ -42,10 +41,11 @@ spec:
               number: 80
 
       # ── Public JWKS Discovery Route (for external standalone blockchain backend) ─
-      - path: /.well-known(/|$)(.*)
-        pathType: ImplementationSpecific
+      - pathType: Prefix
+        path: "/.well-known"
         backend:
           service:
             name: pharma-core-service
             port:
               number: 80
+

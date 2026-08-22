@@ -25,7 +25,9 @@ const createBackendClient = () => {
             Authorization: `Bearer ${bearerJwt}`,
             'Content-Type': 'application/json',
         },
-        timeout: 10000,
+        timeout:          60_000,      // 60s — large Fabric batch commits can take time
+        maxBodyLength:    Infinity,    // Avoid axios body size cap on chunk payloads
+        maxContentLength: Infinity,
     });
 };
 
@@ -76,4 +78,52 @@ export const getPackStatus = async (packHash, batchId) => {
         params: { packHash, batchId },
     });
     return response.data;
+};
+
+/**
+ * Submits a large batch of transitions to pharma-backend-service in fixed-size chunks.
+ *
+ * Why chunking?
+ *   - Each chunk maps to one Fabric block commit (clean boundary).
+ *   - Smaller payloads reduce HTTP timeout risk (~50KB vs ~200KB for 1000 packs).
+ *   - The chaincode `recordTransitionBatch` is idempotent — safe to retry any chunk.
+ *
+ * @param {Array<Object>} transitions - Full array of transition objects.
+ * @param {number}        chunkSize   - Max transitions per HTTP request (default 250).
+ * @returns {Promise<string[]>}         Flat array of all recorded hashes across chunks.
+ */
+export const submitTransitionBatchChunked = async (transitions, chunkSize = 250) => {
+    const totalChunks   = Math.ceil(transitions.length / chunkSize);
+    const allRecorded   = [];
+
+    for (let i = 0; i < transitions.length; i += chunkSize) {
+        const chunk     = transitions.slice(i, i + chunkSize);
+        const chunkNum  = Math.floor(i / chunkSize) + 1;
+
+        console.log(
+            `[pharma-core BackendClient] Submitting chunk ${chunkNum}/${totalChunks}` +
+            ` (${chunk.length} transitions, offset ${i})`,
+        );
+
+        // Fresh RS256 Bearer JWT per chunk (tokens are short-lived, 5 min TTL)
+        const result = await submitTransitionBatch(chunk);
+
+        // pharma-backend returns an array of recorded hash strings
+        if (Array.isArray(result)) {
+            allRecorded.push(...result);
+        } else if (Array.isArray(result?.recordedHashes)) {
+            allRecorded.push(...result.recordedHashes);
+        }
+
+        console.log(
+            `[pharma-core BackendClient] Chunk ${chunkNum}/${totalChunks} committed ✅`,
+        );
+    }
+
+    console.log(
+        `[pharma-core BackendClient] All ${totalChunks} chunk(s) submitted — ` +
+        `${allRecorded.length}/${transitions.length} transitions recorded on Fabric`,
+    );
+
+    return allRecorded;
 };

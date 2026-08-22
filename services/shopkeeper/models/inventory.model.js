@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-export const EVENT_TYPE = ['INTAKE', 'SALE'];
+export const EVENT_TYPE = ['INTAKE', 'SOLD', 'SALE'];
 
 // ── Sub-schemas ───────────────────────────────────────────────────────────────
 

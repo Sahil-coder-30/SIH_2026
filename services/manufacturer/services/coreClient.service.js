@@ -8,6 +8,7 @@ const SERVICE_TOKEN = process.env.SERVICE_TOKEN || 'pharma-cluster-internal-secr
 
 /**
  * Creates an axios instance with Bearer JWT / Service Token headers for pharma-core.
+ * Configured with generous timeouts and body limits for bulk operations (up to 1 lakh packs).
  * @param {string} [authToken] - Optional user session JWT
  */
 const getCoreClient = (authToken) =>
@@ -18,7 +19,9 @@ const getCoreClient = (authToken) =>
             'X-Service-Token': SERVICE_TOKEN,
             'Content-Type': 'application/json',
         },
-        timeout: 30000, // 30s for batch minting operations
+        timeout:          180_000,   // 3 minutes — allows pharma-core to sign 1 lakh packs + chunked fabric submit
+        maxContentLength: Infinity,  // Accommodate large response payloads (100k pack objects)
+        maxBodyLength:    Infinity,
     });
 
 // ── Exports ───────────────────────────────────────────────────────────────────
@@ -38,7 +41,7 @@ export const generateKeyForManufacturer = async (manufacturerId, authToken) => {
 /**
  * Requests pharma-core to mint all packs in a batch (sign JWTs + register on Fabric).
  * @param {Object} params - { batchId, manufacturerId, expiryDate, quantity, authToken }
- * @returns {Promise<{ batchId: string, packs: Array<{ serial, packHash, signedToken }> }>}
+ * @returns {Promise<{ batchId: string, packs: Array<{ serial, packHash, signedToken }>, totalPacks: number, backendSubmitted: boolean, partialBlockchainSubmit: boolean }>}
  */
 export const mintBatchViaPharmaCore = async ({ batchId, manufacturerId, expiryDate, quantity, authToken }) => {
     const response = await getCoreClient(authToken).post('/core/batch/mint', {
@@ -47,7 +50,7 @@ export const mintBatchViaPharmaCore = async ({ batchId, manufacturerId, expiryDa
         expiryDate,
         quantity,
     });
-    console.log(`[manufacturer-service CoreClient] Batch ${batchId} minted — ${quantity} packs`);
+    console.log(`[manufacturer-service CoreClient] Batch ${batchId} minted — ${quantity} packs signed by pharma-core`);
     return response.data;
 };
 

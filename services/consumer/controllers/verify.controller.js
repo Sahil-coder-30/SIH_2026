@@ -24,18 +24,54 @@ const mapStatusToUiState = (blockchainStatus) => {
     }
 };
 
+// ── URL & Token Parser Helper ──────────────────────────────────────────────────
+/**
+ * Intelligently extracts the raw signed JWT token and packHash whether the scanner provides:
+ *   1. Full verify URL: "https://pharmachain.gov.in/verify/a8f5f167...?token=eyJhbGci..."
+ *   2. Path param URL:  "https://pharmachain.gov.in/verify/a8f5f167..."
+ *   3. Raw JWT string:  "eyJhbGciOiJFUzI1Ni..."
+ */
+const extractTokenAndHashFromQrData = (input) => {
+    if (!input || typeof input !== 'string') return { token: '', hash: '' };
+    
+    const raw = input.trim();
+    let token = raw;
+    let hash  = '';
+
+    if (raw.includes('/verify/')) {
+        const afterVerify = raw.split('/verify/')[1];
+        if (afterVerify) {
+            hash = afterVerify.split('?')[0].split('/')[0];
+        }
+    }
+
+    if (raw.includes('token=')) {
+        try {
+            const urlObj = new URL(raw.startsWith('http') ? raw : `https://pharmachain.gov.in/${raw}`);
+            token = urlObj.searchParams.get('token') || raw;
+        } catch {
+            const match = raw.match(/[?&]token=([^&]+)/);
+            if (match && match[1]) token = decodeURIComponent(match[1]);
+        }
+    }
+
+    return { token, hash };
+};
+
 // ── Controllers ───────────────────────────────────────────────────────────────
 
 export const verifyQrController = async (req, res) => {
     try {
-        const { qrData } = req.body;
+        const inputData = req.body.qrData || req.body.token || req.body.signedToken || req.query.token || req.query.qrData;
 
-        if (!qrData) {
-            return res.status(400).json({ status: 'error', message: 'qrData is required' });
+        if (!inputData) {
+            return res.status(400).json({ status: 'error', message: 'qrData or token is required' });
         }
 
+        const { token: parsedToken, hash: parsedUrlHash } = extractTokenAndHashFromQrData(inputData);
+
         // ── Tier 1: Cryptographic signature verification ───────────────────────
-        const verifyResult = await verifyToken(qrData);
+        const verifyResult = await verifyToken(parsedToken);
 
         if (!verifyResult.valid) {
             // UI State 6 — COUNTERFEIT
@@ -44,6 +80,7 @@ export const verifyQrController = async (req, res) => {
                 uiState: UI_STATE.COUNTERFEIT,
                 message: 'COUNTERFEIT WARNING: Invalid digital signature. Do not consume this medicine.',
                 valid: false,
+                scannedHash: parsedUrlHash || null,
             });
         }
 
