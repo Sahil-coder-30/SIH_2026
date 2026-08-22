@@ -58,18 +58,12 @@ export const intakeScanController = async (req, res) => {
         const { batchId, expiryDate, manufacturerId, medicineName, batchNo } = payload;
 
         if (new Date(expiryDate) < new Date()) {
-            return res.status(400).json({
-                success: false,
-                error: { code: 'EXPIRED', message: `Medicine expired on ${expiryDate}` },
-            });
+            return res.status(400).json({ status: 'error', message: `Medicine expired on ${expiryDate}` });
         }
 
         const alreadyIntaken = await PackEvent.exists({ shopkeeperId, packHash, eventType: 'INTAKE' });
         if (alreadyIntaken) {
-            return res.status(409).json({
-                success: false,
-                error: { code: 'DUPLICATE_INTAKE', message: 'This pack has already been received into your inventory.' },
-            });
+            return res.status(409).json({ status: 'error', message: 'This pack has already been received into your inventory.' });
         }
 
         await recordIntake({ packHash, shopId: shopkeeperId, operatorId, manufacturerId });
@@ -86,18 +80,17 @@ export const intakeScanController = async (req, res) => {
         console.log(`[shopkeeper-service Scan] Intake accepted — pack ${packHash} at shop ${shopkeeperId}`);
 
         return res.status(200).json({
-            success: true,
-            code:    'ACCEPTED',
+            status:  'success',
             message: 'Stock added successfully',
             data:    { packHash, batchId, expiryDate, manufacturerId },
         });
     } catch (err) {
         console.error('[shopkeeper-service Scan] intakeScanController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
-// ── (Existing) Sale Scan ─────────────────────────────────────────────────────
+// ── Sale Scan (Signed JWT) ────────────────────────────────────────────────────
 export const saleScanController = async (req, res) => {
     try {
         const rawInput = req.body.signedToken || req.body.qrData || req.body.token;
@@ -122,19 +115,19 @@ export const saleScanController = async (req, res) => {
         }
 
         const { payload, packHash } = verifyResult;
-        const { batchId, expiryDate } = payload;
+        const { batchId } = payload;
 
         const statusResult = await getPackStatus(packHash, batchId);
         const { status }   = statusResult;
 
         if (status === 'Recalled') {
-            return res.status(409).json({ success: false, error: { code: 'RECALLED', message: 'CRITICAL: This batch has been recalled. Do not sell.' } });
+            return res.status(409).json({ status: 'error', message: 'CRITICAL: This batch has been recalled. Do not sell.' });
         }
         if (status === 'Sold') {
-            return res.status(409).json({ success: false, error: { code: 'ALREADY_SOLD', message: 'This pack has already been sold.' } });
+            return res.status(409).json({ status: 'error', message: 'This pack has already been sold.' });
         }
         if (status !== 'AtShop') {
-            return res.status(400).json({ success: false, error: { code: 'PACK_NOT_AT_SHOP', message: `Pack cannot be sold — current status: ${status}. Complete intake scan first.` } });
+            return res.status(400).json({ status: 'error', message: `Pack cannot be sold — current status: ${status}. Complete intake scan first.` });
         }
 
         await recordSale({ packHash, shopId: shopkeeperId, operatorId });
@@ -150,13 +143,12 @@ export const saleScanController = async (req, res) => {
         console.log(`[shopkeeper-service Scan] Sale confirmed — pack ${packHash} at shop ${shopkeeperId}`);
 
         return res.status(200).json({
-            success: true,
-            code:    'SOLD',
+            status:  'success',
             message: 'Sale confirmed — hand medicine to consumer',
             data:    { packHash, batchId, soldAt: new Date().toISOString() },
         });
     } catch (err) {
         console.error('[shopkeeper-service Scan] saleScanController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };

@@ -11,20 +11,21 @@ const generateTxnId = (prefix) =>
  * Shared idempotency check — if the key already exists, return the previous result.
  */
 const checkIdempotency = async (idempotencyKey, res) => {
-    if (!idempotencyKey) return null; // Key not provided — proceed normally
+    if (!idempotencyKey) return null;
 
     const existing = await Transaction.findOne({ idempotencyKey }).lean();
     if (existing) {
-        const prefix = existing.type === 'RECEIVE' ? 'REC' : existing.type === 'SELL' ? 'SELL' : 'RET';
         res.status(201).json({
-            success:       true,
-            transactionId: existing.transactionId,
-            packId:        existing.packId,
-            status:        existing.status,
-            timestamp:     existing.createdAt,
-            message:       `[Idempotent] ${existing.status.charAt(0) + existing.status.slice(1).toLowerCase()} previously processed.`,
+            status: 'success',
+            message: `[Idempotent] ${existing.status.charAt(0) + existing.status.slice(1).toLowerCase()} previously processed.`,
+            data: {
+                transactionId: existing.transactionId,
+                packId:        existing.packId,
+                status:        existing.status,
+                timestamp:     existing.createdAt,
+            },
         });
-        return existing; // Signals caller to stop processing
+        return existing;
     }
 
     return null;
@@ -33,22 +34,17 @@ const checkIdempotency = async (idempotencyKey, res) => {
 // ── 3.1 Receive Medicine Stock ────────────────────────────────────────────────
 export const receiveController = async (req, res) => {
     try {
-        const shopkeeperId  = req.user.id;
+        const shopkeeperId   = req.user.id;
         const idempotencyKey = req.headers['idempotency-key'] || null;
-        const { packId }    = req.body;
+        const { packId }     = req.body;
 
         if (!packId) {
-            return res.status(400).json({
-                success: false,
-                error: { code: 'MISSING_FIELDS', message: 'packId is required.' },
-            });
+            return res.status(400).json({ status: 'error', message: 'packId is required.' });
         }
 
-        // ── Idempotency check
         const cached = await checkIdempotency(idempotencyKey, res);
         if (cached) return;
 
-        // ── Verify pack via pharma-core
         let packInfo = {};
         try {
             packInfo = await verifyPackId(packId, req.authToken);
@@ -60,7 +56,6 @@ export const receiveController = async (req, res) => {
         const txnId  = generateTxnId('REC');
         const isoKey = idempotencyKey || txnId;
 
-        // ── Record on blockchain
         try {
             await recordIntake({
                 packHash:       packInfo.packHash || packId,
@@ -72,7 +67,6 @@ export const receiveController = async (req, res) => {
             console.warn(`[shopkeeper-service Txn] Blockchain intake record failed: ${e.message}`);
         }
 
-        // ── Persist Transaction
         const txn = await Transaction.create({
             transactionId:    txnId,
             idempotencyKey:   isoKey,
@@ -91,7 +85,6 @@ export const receiveController = async (req, res) => {
             blockchainTxHash: packInfo.blockchainTxHash || null,
         });
 
-        // ── Persist PackEvent
         await PackEvent.create({
             shopkeeperId,
             packHash:    packInfo.packHash || packId,
@@ -106,9 +99,8 @@ export const receiveController = async (req, res) => {
             trustScore:  packInfo.trustScore   || null,
             manufacturer:packInfo.manufacturer || null,
             mfgDate:     packInfo.mfgDate      ? new Date(packInfo.mfgDate) : null,
-        }).catch(() => {/* non-blocking — may already exist */});
+        }).catch(() => {});
 
-        // ── Update Inventory
         await Inventory.findOneAndUpdate(
             { shopkeeperId, batchId: packInfo.batchNo || packId },
             {
@@ -125,16 +117,18 @@ export const receiveController = async (req, res) => {
         );
 
         return res.status(201).json({
-            success:       true,
-            transactionId: txn.transactionId,
-            packId,
-            status:        'RECEIVED',
-            timestamp:     txn.createdAt,
-            message:       'Medicine successfully received into shop inventory.',
+            status:  'success',
+            message: 'Medicine successfully received into shop inventory.',
+            data: {
+                transactionId: txn.transactionId,
+                packId,
+                status:    'RECEIVED',
+                timestamp: txn.createdAt,
+            },
         });
     } catch (err) {
         console.error('[shopkeeper-service Txn] receiveController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -146,17 +140,12 @@ export const sellController = async (req, res) => {
         const { packId, customerPhone } = req.body;
 
         if (!packId) {
-            return res.status(400).json({
-                success: false,
-                error: { code: 'MISSING_FIELDS', message: 'packId is required.' },
-            });
+            return res.status(400).json({ status: 'error', message: 'packId is required.' });
         }
 
-        // ── Idempotency check
         const cached = await checkIdempotency(idempotencyKey, res);
         if (cached) return;
 
-        // ── Verify pack
         let packInfo = {};
         try {
             packInfo = await verifyPackId(packId, req.authToken);
@@ -167,7 +156,6 @@ export const sellController = async (req, res) => {
         const txnId  = generateTxnId('SELL');
         const isoKey = idempotencyKey || txnId;
 
-        // ── Record SALE on blockchain
         try {
             await recordSale({
                 packHash:  packInfo.packHash || packId,
@@ -178,7 +166,6 @@ export const sellController = async (req, res) => {
             console.warn(`[shopkeeper-service Txn] Blockchain sale record failed: ${e.message}`);
         }
 
-        // ── Persist Transaction
         const txn = await Transaction.create({
             transactionId:  txnId,
             idempotencyKey: isoKey,
@@ -196,7 +183,6 @@ export const sellController = async (req, res) => {
             trustScore:     packInfo.trustScore   || null,
         });
 
-        // ── Persist PackEvent
         await PackEvent.create({
             shopkeeperId,
             packHash:    packInfo.packHash || packId,
@@ -208,25 +194,26 @@ export const sellController = async (req, res) => {
             batchNo:     packInfo.batchNo  || null,
             expDate:     packInfo.expDate   ? new Date(packInfo.expDate) : null,
             scanStatus:  packInfo.status    || 'Verified',
-        }).catch(() => {/* non-blocking */});
+        }).catch(() => {});
 
-        // ── Decrement inventory
         await Inventory.findOneAndUpdate(
             { shopkeeperId, batchId: packInfo.batchNo || packId },
             { $inc: { currentStock: -1 } },
         );
 
         return res.status(201).json({
-            success:       true,
-            transactionId: txn.transactionId,
-            packId,
-            status:        'SOLD',
-            timestamp:     txn.createdAt,
-            message:       'Medicine sale registered successfully.',
+            status:  'success',
+            message: 'Medicine sale registered successfully.',
+            data: {
+                transactionId: txn.transactionId,
+                packId,
+                status:    'SOLD',
+                timestamp: txn.createdAt,
+            },
         });
     } catch (err) {
         console.error('[shopkeeper-service Txn] sellController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -240,24 +227,19 @@ export const returnController = async (req, res) => {
         const VALID_REASONS = ['CUSTOMER_RETURN', 'DAMAGED_PACKAGING', 'EXPIRED'];
 
         if (!packId || !reason) {
-            return res.status(400).json({
-                success: false,
-                error: { code: 'MISSING_FIELDS', message: 'packId and reason are required.' },
-            });
+            return res.status(400).json({ status: 'error', message: 'packId and reason are required.' });
         }
 
         if (!VALID_REASONS.includes(reason)) {
             return res.status(422).json({
-                success: false,
-                error: { code: 'INVALID_REASON', message: `reason must be one of: ${VALID_REASONS.join(', ')}` },
+                status: 'error',
+                message: `reason must be one of: ${VALID_REASONS.join(', ')}`,
             });
         }
 
-        // ── Idempotency check
         const cached = await checkIdempotency(idempotencyKey, res);
         if (cached) return;
 
-        // ── Verify pack
         let packInfo = {};
         try {
             packInfo = await verifyPackId(packId, req.authToken);
@@ -268,7 +250,6 @@ export const returnController = async (req, res) => {
         const txnId  = generateTxnId('RET');
         const isoKey = idempotencyKey || txnId;
 
-        // ── Record RETURN on blockchain
         try {
             await recordReturn({
                 packHash:  packInfo.packHash || packId,
@@ -280,7 +261,6 @@ export const returnController = async (req, res) => {
             console.warn(`[shopkeeper-service Txn] Blockchain return record failed: ${e.message}`);
         }
 
-        // ── Persist Transaction
         const txn = await Transaction.create({
             transactionId:  txnId,
             idempotencyKey: isoKey,
@@ -295,7 +275,6 @@ export const returnController = async (req, res) => {
             scanStatus:     packInfo.status       || 'Verified',
         });
 
-        // ── Persist PackEvent
         await PackEvent.create({
             shopkeeperId,
             packHash:    packInfo.packHash || packId,
@@ -305,24 +284,25 @@ export const returnController = async (req, res) => {
             operatorId:  shopkeeperId,
             medicineName:packInfo.name || null,
             scanStatus:  packInfo.status || 'Verified',
-        }).catch(() => {/* non-blocking */});
+        }).catch(() => {});
 
-        // ── Increment inventory back
         await Inventory.findOneAndUpdate(
             { shopkeeperId, batchId: packInfo.batchNo || packId },
             { $inc: { currentStock: 1 } },
         );
 
         return res.status(201).json({
-            success:       true,
-            transactionId: txn.transactionId,
-            packId,
-            status:        'RETURNED',
-            timestamp:     txn.createdAt,
-            message:       'Medicine return registered successfully.',
+            status:  'success',
+            message: 'Medicine return registered successfully.',
+            data: {
+                transactionId: txn.transactionId,
+                packId,
+                status:    'RETURNED',
+                timestamp: txn.createdAt,
+            },
         });
     } catch (err) {
         console.error('[shopkeeper-service Txn] returnController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };

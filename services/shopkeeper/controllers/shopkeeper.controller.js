@@ -21,16 +21,18 @@ export const statsController = async (req, res) => {
             ]);
 
         return res.status(200).json({
-            success:         true,
-            totalScans,
-            verifiedCount,
-            suspiciousCount,
-            counterfeitCount,
-            todaySalesCount: todaySales,
+            status: 'success',
+            data: {
+                totalScans,
+                verifiedCount,
+                suspiciousCount,
+                counterfeitCount,
+                todaySalesCount: todaySales,
+            },
         });
     } catch (err) {
         console.error('[shopkeeper-service] statsController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -65,17 +67,19 @@ export const historyController = async (req, res) => {
         }));
 
         return res.status(200).json({
-            success: true,
-            history,
-            pagination: {
-                currentPage: parseInt(page),
-                totalPages:  Math.ceil(total / lim),
-                totalItems:  total,
+            status: 'success',
+            data: {
+                history,
+                pagination: {
+                    currentPage: parseInt(page),
+                    totalPages:  Math.ceil(total / lim),
+                    totalItems:  total,
+                },
             },
         });
     } catch (err) {
         console.error('[shopkeeper-service] historyController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -102,12 +106,12 @@ export const inventoryController = async (req, res) => {
         }));
 
         return res.status(200).json({
-            success: true,
-            inventory,
+            status: 'success',
+            data: { inventory },
         });
     } catch (err) {
         console.error('[shopkeeper-service] inventoryController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
@@ -116,38 +120,39 @@ export const getProfileController = async (req, res) => {
     try {
         const shopkeeper = await Shopkeeper.findOne({ shopId: req.user.id }).lean();
         if (!shopkeeper) {
-            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Shopkeeper not found.' } });
+            return res.status(404).json({ status: 'error', message: 'Shopkeeper not found.' });
         }
 
         return res.status(200).json({
-            success: true,
-            shopkeeper: {
-                shopId:            shopkeeper.shopId,
-                shopName:          shopkeeper.shop.name,
-                ownerName:         shopkeeper.owner.name,
-                ownerEmail:        shopkeeper.owner.email,
-                ownerPhone:        shopkeeper.owner.phone,
-                shopEmail:         shopkeeper.shop.email,
-                shopPhone:         shopkeeper.shop.phone,
-                address:           shopkeeper.shop.address,
-                city:              shopkeeper.shop.city,
-                state:             shopkeeper.shop.state,
-                pincode:           shopkeeper.shop.pincode,
-                drugLicenseNumber: shopkeeper.license.drugLicenseNumber,
-                licenseType:       shopkeeper.license.licenseType,
-                issuingAuthority:  shopkeeper.license.issuingAuthority,
-                licenseExpiryDate: shopkeeper.license.expiryDate,
-                verificationStatus:shopkeeper.verificationStatus,
+            status: 'success',
+            data: {
+                shopkeeper: {
+                    shopId:            shopkeeper.shopId,
+                    shopName:          shopkeeper.shop.name,
+                    ownerName:         shopkeeper.owner.name,
+                    ownerEmail:        shopkeeper.owner.email,
+                    ownerPhone:        shopkeeper.owner.phone,
+                    shopEmail:         shopkeeper.shop.email,
+                    shopPhone:         shopkeeper.shop.phone,
+                    address:           shopkeeper.shop.address,
+                    city:              shopkeeper.shop.city,
+                    state:             shopkeeper.shop.state,
+                    pincode:           shopkeeper.shop.pincode,
+                    drugLicenseNumber: shopkeeper.license.drugLicenseNumber,
+                    licenseType:       shopkeeper.license.licenseType,
+                    issuingAuthority:  shopkeeper.license.issuingAuthority,
+                    licenseExpiryDate: shopkeeper.license.expiryDate,
+                    verificationStatus:shopkeeper.verificationStatus,
+                },
             },
         });
     } catch (err) {
         console.error('[shopkeeper-service] getProfileController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
 
 // ── 5.2 Update Profile ────────────────────────────────────────────────────────
-// Sensitive fields (shopId, drugLicenseNumber, verificationStatus) cannot be patched.
 const ALLOWED_PATCH_FIELDS = ['shopName', 'shopPhone', 'shopEmail', 'address', 'city', 'state', 'pincode'];
 
 export const updateProfileController = async (req, res) => {
@@ -165,8 +170,8 @@ export const updateProfileController = async (req, res) => {
 
         if (Object.keys(updates).length === 0) {
             return res.status(400).json({
-                success: false,
-                error: { code: 'NO_CHANGES', message: `Allowed updatable fields: ${ALLOWED_PATCH_FIELDS.join(', ')}` },
+                status: 'error',
+                message: `Allowed updatable fields: ${ALLOWED_PATCH_FIELDS.join(', ')}`,
             });
         }
 
@@ -177,25 +182,27 @@ export const updateProfileController = async (req, res) => {
         );
 
         if (!updated) {
-            return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Shopkeeper not found.' } });
+            return res.status(404).json({ status: 'error', message: 'Shopkeeper not found.' });
         }
 
         return res.status(200).json({
-            success: true,
+            status: 'success',
             message: 'Profile updated successfully.',
-            shopkeeper: {
-                shopId:    updated.shopId,
-                shopName:  updated.shop.name,
-                shopPhone: updated.shop.phone,
-                shopEmail: updated.shop.email,
-                address:   updated.shop.address,
-                city:      updated.shop.city,
-                state:     updated.shop.state,
-                pincode:   updated.shop.pincode,
+            data: {
+                shopkeeper: {
+                    shopId:    updated.shopId,
+                    shopName:  updated.shop.name,
+                    shopPhone: updated.shop.phone,
+                    shopEmail: updated.shop.email,
+                    address:   updated.shop.address,
+                    city:      updated.shop.city,
+                    state:     updated.shop.state,
+                    pincode:   updated.shop.pincode,
+                },
             },
         });
     } catch (err) {
         console.error('[shopkeeper-service] updateProfileController:', err.message);
-        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+        return res.status(500).json({ status: 'error', message: err.message });
     }
 };
