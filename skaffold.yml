@@ -1,0 +1,70 @@
+# skaffold.yml — PharmaChain Platform
+# Manages continuous builds and live file synchronization into Kubernetes.
+# tagPolicy: sha256 ensures deterministic, non-conflicting image IDs.
+
+apiVersion: skaffold/v4beta2
+kind: Config
+
+build:
+  tagPolicy:
+    sha256: {}
+  artifacts:
+    # ── 1. Manufacturer Service ─────────────────────────────────────────────
+    - image: manufacturer-service
+      context: services/manufacturer
+      docker:
+        dockerfile: dockerfile
+      sync:
+        infer:
+          - "src/**"
+
+    # ── 2. Shopkeeper Service ───────────────────────────────────────────────
+    - image: shopkeeper-service
+      context: services/shopkeeper
+      docker:
+        dockerfile: dockerfile
+      sync:
+        infer:
+          - "src/**"
+
+    # ── 3. Consumer Service ─────────────────────────────────────────────────
+    - image: consumer-service
+      context: services/consumer
+      docker:
+        dockerfile: dockerfile
+      sync:
+        infer:
+          - "src/**"
+
+    # ── 4. Pharma Core Crypto Vault ─────────────────────────────────────────
+    - image: pharma-core-service
+      context: services/pharma-core
+      docker:
+        dockerfile: dockerfile
+      sync:
+        infer:
+          - "src/**"
+
+manifests:
+  rawYaml:
+    - k8s/secrets.yml
+    - k8s/manufacturer-db.deployment.yml
+    - k8s/manufacturer-db.service.yml
+    - k8s/shopkeeper-db.deployment.yml
+    - k8s/shopkeeper-db.service.yml
+    - k8s/pharma-core.deployment.yml
+    - k8s/pharma-core.service.yml
+    - k8s/manufacturer.deployment.yml
+    - k8s/manufacturer.service.yml
+    - k8s/shopkeeper.deployment.yml
+    - k8s/shopkeeper.service.yml
+    - k8s/consumer.deployment.yml
+    - k8s/consumer.service.yml
+    - k8s/ingress.yml
+
+portForward:
+  - resourceType: service
+    resourceName: ingress-nginx-controller
+    namespace: ingress-nginx
+    port: 80
+    localPort: 80

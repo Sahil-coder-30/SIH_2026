@@ -1,0 +1,23 @@
+# ── Node.js ───────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+*.log
+
+# ── Environment secrets — NEVER commit real .env files ───────────────────────
+services/pharma-core/.env
+services/manufacturer/.env
+services/shopkeeper/.env
+services/consumer/.env
+
+# ── Kubernetes secrets — NEVER commit, use secrets.yml.example instead ───────
+k8s/secrets.yml
+
+# ── Crypto data (keystore file is mounted as PVC in K8s) ─────────────────────
+services/pharma-core/data/
+
+# ── RSA private key — NEVER commit, public key is safe ───────────────────────
+services/pharma-core/config/rsa/pharma-core-private.pem
+
+# ── OS artifacts ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

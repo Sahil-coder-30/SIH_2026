@@ -1,0 +1,23 @@
+{
+  "name": "shopkeeper-service",
+  "version": "1.0.0",
+  "description": "PharmaChain Shopkeeper Domain Service — Intake Scan, POS Sale, Inventory",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon -L server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.5.1",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "morgan": "^1.10.0",
+    "axios": "^1.7.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}

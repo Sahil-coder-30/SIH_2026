@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manufacturer-deployment
+  labels:
+    app: manufacturer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: manufacturer
+  template:
+    metadata:
+      labels:
+        app: manufacturer
+    spec:
+      containers:
+      - name: manufacturer-container
+        image: manufacturer-service
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 3001
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 5
+        ports:
+        - containerPort: 3001
+          name: mfr-http
+        env:
+        - name: PORT
+          value: "3001"
+        - name: NODE_ENV
+          value: "production"
+        - name: PHARMA_CORE_URL
+          value: "http://pharma-core-service:80"
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: MANUFACTURER_MONGO_URI
+        - name: SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: SERVICE_TOKEN
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: MANUFACTURER_JWT_SECRET

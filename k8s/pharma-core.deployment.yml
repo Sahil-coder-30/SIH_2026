@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pharma-core-deployment
+  labels:
+    app: pharma-core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pharma-core
+  template:
+    metadata:
+      labels:
+        app: pharma-core
+    spec:
+      containers:
+      - name: pharma-core-container
+        image: pharma-core-service
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /core/health
+            port: 4000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /core/health
+            port: 4000
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 5
+        ports:
+        - containerPort: 4000
+          name: core-http
+        env:
+        - name: PORT
+          value: "4000"
+        - name: NODE_ENV
+          value: "production"
+        - name: PHARMA_BACKEND_URL
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: PHARMA_BACKEND_URL
+        - name: KEYSTORE_PATH
+          value: "/data/keystore.json"
+        - name: SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: SERVICE_TOKEN
+        - name: KEY_ENCRYPTION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secret
+              key: KEY_ENCRYPTION_SECRET
+        - name: CORE_RSA_KID
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secret
+              key: CORE_RSA_KID
+        - name: CORE_RSA_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secret
+              key: CORE_RSA_PRIVATE_KEY
+        - name: CORE_RSA_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: crypto-secret
+              key: CORE_RSA_PUBLIC_KEY
+        volumeMounts:
+        - name: keystore-vol
+          mountPath: /data
+      volumes:
+      - name: keystore-vol
+        persistentVolumeClaim:
+          claimName: pharma-core-keystore-pvc

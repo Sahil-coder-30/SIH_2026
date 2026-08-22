@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manufacturer-db-deployment
+  labels:
+    app: manufacturer-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: manufacturer-db
+  template:
+    metadata:
+      labels:
+        app: manufacturer-db
+    spec:
+      containers:
+      - name: manufacturer-db-container
+        image: mongo:7.0
+        ports:
+        - containerPort: 27017
+          name: mongo
+        volumeMounts:
+        - name: manufacturer-db-data
+          mountPath: /data/db
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: manufacturer-db-data
+        persistentVolumeClaim:
+          claimName: manufacturer-db-pvc

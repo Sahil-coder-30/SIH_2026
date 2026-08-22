@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopkeeper-db-deployment
+  labels:
+    app: shopkeeper-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shopkeeper-db
+  template:
+    metadata:
+      labels:
+        app: shopkeeper-db
+    spec:
+      containers:
+      - name: shopkeeper-db-container
+        image: mongo:7.0
+        ports:
+        - containerPort: 27017
+          name: mongo
+        volumeMounts:
+        - name: shopkeeper-db-data
+          mountPath: /data/db
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: shopkeeper-db-data
+        persistentVolumeClaim:
+          claimName: shopkeeper-db-pvc

@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopkeeper-deployment
+  labels:
+    app: shopkeeper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shopkeeper
+  template:
+    metadata:
+      labels:
+        app: shopkeeper
+    spec:
+      containers:
+      - name: shopkeeper-container
+        image: shopkeeper-service
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 3002
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 5
+        ports:
+        - containerPort: 3002
+          name: shop-http
+        env:
+        - name: PORT
+          value: "3002"
+        - name: NODE_ENV
+          value: "production"
+        - name: PHARMA_CORE_URL
+          value: "http://pharma-core-service:80"
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: SHOPKEEPER_MONGO_URI
+        - name: SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: SERVICE_TOKEN
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: SHOPKEEPER_JWT_SECRET
