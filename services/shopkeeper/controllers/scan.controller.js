@@ -35,7 +35,7 @@ export const intakeScanController = async (req, res) => {
     try {
         const rawInput = req.body.signedToken || req.body.qrData || req.body.token;
         const shopkeeperId = req.user.id;
-        const operatorId = req.user.id;
+        const operatorId   = req.user.id;
 
         if (!rawInput) {
             return res.status(400).json({ status: 'error', message: 'signedToken or qrData is required' });
@@ -55,38 +55,25 @@ export const intakeScanController = async (req, res) => {
         }
 
         const { payload, packHash } = verifyResult;
-        const { batchId, expiryDate, manufacturerId, medicineName } = payload;
+        const { batchId, expiryDate, manufacturerId, medicineName, batchNo } = payload;
 
-        // ── Check expiry date ─────────────────────────────────────────────────
         if (new Date(expiryDate) < new Date()) {
             return res.status(400).json({
-                status: 'error',
-                code: 'EXPIRED',
-                message: `Medicine expired on ${expiryDate}`,
+                success: false,
+                error: { code: 'EXPIRED', message: `Medicine expired on ${expiryDate}` },
             });
         }
 
-        // ── Duplicate intake guard using Mongoose ─────────────────────────────
-        const alreadyIntaken = await PackEvent.exists({
-            shopkeeperId,
-            packHash,
-            eventType: 'INTAKE',
-        });
-
+        const alreadyIntaken = await PackEvent.exists({ shopkeeperId, packHash, eventType: 'INTAKE' });
         if (alreadyIntaken) {
             return res.status(409).json({
-                status: 'error',
-                code: 'DUPLICATE_INTAKE',
-                message: 'This pack has already been received into your inventory',
+                success: false,
+                error: { code: 'DUPLICATE_INTAKE', message: 'This pack has already been received into your inventory.' },
             });
         }
 
-        // ── Record INTAKE on Fabric via pharma-core ───────────────────────────
         await recordIntake({ packHash, shopId: shopkeeperId, operatorId, manufacturerId });
-
-        // ── Persist pack event and update inventory ───────────────────────────
-        await PackEvent.create({ shopkeeperId, packHash, batchId, eventType: 'INTAKE', operatorId });
-
+        await PackEvent.create({ shopkeeperId, packHash, packId: packHash, batchId, eventType: 'INTAKE', operatorId, medicineName, batchNo, expDate: expiryDate ? new Date(expiryDate) : null, scanStatus: 'Verified' });
         await Inventory.findOneAndUpdate(
             { shopkeeperId, batchId },
             {
@@ -99,17 +86,18 @@ export const intakeScanController = async (req, res) => {
         console.log(`[shopkeeper-service Scan] Intake accepted — pack ${packHash} at shop ${shopkeeperId}`);
 
         return res.status(200).json({
-            status: 'success',
-            code: 'ACCEPTED',
+            success: true,
+            code:    'ACCEPTED',
             message: 'Stock added successfully',
-            data: { packHash, batchId, expiryDate, manufacturerId },
+            data:    { packHash, batchId, expiryDate, manufacturerId },
         });
-    } catch (error) {
-        console.error('[shopkeeper-service Scan] intakeScanController error:', error.message);
-        return res.status(500).json({ status: 'error', message: error.message });
+    } catch (err) {
+        console.error('[shopkeeper-service Scan] intakeScanController:', err.message);
+        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
     }
 };
 
+// ── (Existing) Sale Scan ─────────────────────────────────────────────────────
 export const saleScanController = async (req, res) => {
     try {
         const rawInput = req.body.signedToken || req.body.qrData || req.body.token;
@@ -136,36 +124,19 @@ export const saleScanController = async (req, res) => {
         const { payload, packHash } = verifyResult;
         const { batchId, expiryDate } = payload;
 
-        // ── Tier 2: Blockchain status check ───────────────────────────────────
         const statusResult = await getPackStatus(packHash, batchId);
-        const { status } = statusResult;
+        const { status }   = statusResult;
 
-        // ── Enforce state machine rules ───────────────────────────────────────
         if (status === 'Recalled') {
-            return res.status(409).json({
-                status: 'error',
-                code: 'RECALLED',
-                message: 'CRITICAL: This batch has been recalled by the manufacturer. Do not sell.',
-            });
+            return res.status(409).json({ success: false, error: { code: 'RECALLED', message: 'CRITICAL: This batch has been recalled. Do not sell.' } });
         }
-
         if (status === 'Sold') {
-            return res.status(409).json({
-                status: 'error',
-                code: 'ALREADY_SOLD',
-                message: 'This pack has already been sold',
-            });
+            return res.status(409).json({ success: false, error: { code: 'ALREADY_SOLD', message: 'This pack has already been sold.' } });
         }
-
         if (status !== 'AtShop') {
-            return res.status(400).json({
-                status: 'error',
-                code: 'PACK_NOT_AT_SHOP',
-                message: `Pack cannot be sold — current status: ${status}. Complete intake scan first.`,
-            });
+            return res.status(400).json({ success: false, error: { code: 'PACK_NOT_AT_SHOP', message: `Pack cannot be sold — current status: ${status}. Complete intake scan first.` } });
         }
 
-        // ── Record SALE on Fabric via pharma-core ─────────────────────────────
         await recordSale({ packHash, shopId: shopkeeperId, operatorId });
 
         // ── Persist sale event and decrement inventory ────────────────────────
@@ -179,13 +150,13 @@ export const saleScanController = async (req, res) => {
         console.log(`[shopkeeper-service Scan] Sale confirmed — pack ${packHash} at shop ${shopkeeperId}`);
 
         return res.status(200).json({
-            status: 'success',
-            code: 'SOLD',
+            success: true,
+            code:    'SOLD',
             message: 'Sale confirmed — hand medicine to consumer',
-            data: { packHash, batchId, soldAt: new Date().toISOString() },
+            data:    { packHash, batchId, soldAt: new Date().toISOString() },
         });
-    } catch (error) {
-        console.error('[shopkeeper-service Scan] saleScanController error:', error.message);
-        return res.status(500).json({ status: 'error', message: error.message });
+    } catch (err) {
+        console.error('[shopkeeper-service Scan] saleScanController:', err.message);
+        return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
     }
 };

@@ -50,6 +50,17 @@ export const getPackStatus = async (packHash, batchId, authToken) => {
 };
 
 /**
+ * Fetches full medicine info for a packId (for scan-by-packId flows).
+ * @param {string} packId
+ * @param {string} [authToken]
+ * @returns {Promise<Object>}
+ */
+export const getPackInfo = async (packId, authToken) => {
+    const response = await getCoreClient(authToken).get(`/core/pack/${packId}`);
+    return response.data;
+};
+
+/**
  * Records an INTAKE transition on Fabric via pharma-core.
  * @param {Object} params - { packHash, shopId, operatorId, manufacturerId, authToken }
  * @returns {Promise<Object>}
@@ -73,5 +84,33 @@ export const recordIntake = async ({ packHash, shopId, operatorId, manufacturerI
 export const recordSale = async ({ packHash, shopId, operatorId, authToken }) => {
     const response = await getCoreClient(authToken).post('/core/chain/sale', { packHash, shopId, operatorId });
     console.log(`[shopkeeper-service CoreClient] Sale recorded for packHash: ${packHash}`);
+    return response.data;
+};
+
+/**
+ * Records a RETURN transition on Fabric via pharma-core.
+ * @param {Object} params - { packHash, shopId, operatorId, reason, authToken }
+ * @returns {Promise<Object>}
+ */
+export const recordReturn = async ({ packHash, shopId, operatorId, reason, authToken }) => {
+    const response = await getCoreClient(authToken).post('/core/chain/return', {
+        packHash,
+        shopId,
+        operatorId,
+        reason,
+    });
+    console.log(`[shopkeeper-service CoreClient] Return recorded for packHash: ${packHash}`);
+    return response.data;
+};
+
+/**
+ * Performs a lightweight medicine verification by packId (for transaction endpoints).
+ * Returns medicine metadata + blockchain status without requiring a signed JWT.
+ * @param {string} packId
+ * @param {string} [authToken]
+ * @returns {Promise<Object>}
+ */
+export const verifyPackId = async (packId, authToken) => {
+    const response = await getCoreClient(authToken).post('/core/verify/packId', { packId });
     return response.data;
 };

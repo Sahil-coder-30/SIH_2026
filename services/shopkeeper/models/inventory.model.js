@@ -10,24 +10,39 @@ const PackEventSchema = new mongoose.Schema(
     {
         shopkeeperId: { type: String, required: true, index: true },
         packHash:     { type: String, required: true },
+        packId:       { type: String, required: true },
         batchId:      { type: String, required: true },
         eventType:    { type: String, enum: EVENT_TYPE, required: true },
         operatorId:   { type: String, default: null },
+
+        // Scan result data
+        medicineName: { type: String, default: null },
+        batchNo:      { type: String, default: null },
+        expDate:      { type: Date, default: null },
+        scanStatus:   { type: String, default: 'Verified' }, // Verified | Suspicious | Counterfeit | Expired | Recalled
+        trustScore:   { type: Number, default: null },
+        riskReasons:  [{ type: String }],
+        manufacturer: { type: String, default: null },
+        mfgDate:      { type: Date, default: null },
     },
     { timestamps: true },
 );
 
-// Compound unique: one INTAKE and one SALE record per (shop, pack) pair
-PackEventSchema.index({ shopkeeperId: 1, packHash: 1, eventType: 1 }, { unique: true });
+// Compound index: prevent duplicate INTAKE and SALE events (RETURN and SCAN_ONLY can repeat)
+PackEventSchema.index({ shopkeeperId: 1, packHash: 1, eventType: 1 });
 
 // Inventory — aggregated current stock per batch at each pharmacy
 const InventorySchema = new mongoose.Schema(
     {
-        shopkeeperId: { type: String, required: true, index: true },
-        batchId:      { type: String, required: true },
-        medicineName: { type: String, required: true },
-        expiryDate:   { type: Date, required: true },
-        currentStock: { type: Number, default: 0, min: 0 },
+        shopkeeperId:  { type: String, required: true, index: true },
+        batchId:       { type: String, required: true },
+        medicineName:  { type: String, required: true },
+        batchNo:       { type: String, default: null },
+        manufacturer:  { type: String, default: null },
+        expiryDate:    { type: Date, required: true },
+        receivedDate:  { type: Date, default: Date.now },
+        currentStock:  { type: Number, default: 0, min: 0 },
+        status:        { type: String, default: 'AVAILABLE' }, // AVAILABLE | RECEIVED | RESERVED | RECALLED
     },
     { timestamps: true },
 );
