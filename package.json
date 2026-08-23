@@ -13,7 +13,11 @@
     "test:s3-fetch": "node tests/fetch_existing_s3_data_test.mjs",
     "test:shopkeeper": "node tests/shopkeeper_frontends_test.mjs",
     "test:suite": "node tests/comprehensive_e2e_api_suite.mjs",
-    "test:e2e": "node tests/e2e_integration_test.mjs"
+    "test:e2e": "node tests/e2e_integration_test.mjs",
+    "test:admin": "node tests/admin_service_test.mjs",
+    "start:all": "node scripts/start_all_services.mjs",
+    "dev:all": "node scripts/start_all_services.mjs",
+    "skaffold": "skaffold dev"
   },
   "repository": {
     "type": "git",

@@ -3,6 +3,7 @@ import {
     registerController,
     loginController,
     kycApproveController,
+    kycRejectController,
     logoutController,
 } from '../controllers/auth.controller.js';
 
@@ -20,6 +21,9 @@ router.post('/login', loginController);
 // Sets kycStatus=APPROVED and provisions EC P-256 signing key via pharma-core.
 // Fail-closed: returns 500 if ADMIN_TOKEN env var is not set.
 router.post('/kyc/approve', kycApproveController);
+
+// POST /api/manufacturer/auth/kyc/reject → admin-only, X-Admin-Token header required
+router.post('/kyc/reject', kycRejectController);
 
 // POST /api/manufacturer/auth/logout → clears mfr_token cookie, returns 204
 // Safe to call unauthenticated.

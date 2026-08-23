@@ -45,6 +45,15 @@ build:
         infer:
           - "src/**"
 
+    # ── 5. Admin Service ────────────────────────────────────────────────────
+    - image: admin-service
+      context: services/admin
+      docker:
+        dockerfile: Dockerfile
+      sync:
+        infer:
+          - "src/**"
+
 manifests:
   rawYaml:
     - k8s/secrets.yml
@@ -56,6 +65,8 @@ manifests:
     - k8s/shopkeeper.service.yml
     - k8s/consumer.deployment.yml
     - k8s/consumer.service.yml
+    - k8s/admin.deployment.yml
+    - k8s/admin.service.yml
     - k8s/ingress.yml
 
 portForward:
@@ -75,3 +86,7 @@ portForward:
     resourceName: consumer-service
     port: 80
     localPort: 3003
+  - resourceType: service
+    resourceName: admin-service
+    port: 80
+    localPort: 3005

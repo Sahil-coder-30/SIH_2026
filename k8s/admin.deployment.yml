@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-deployment
+  labels:
+    app: admin-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-service
+  template:
+    metadata:
+      labels:
+        app: admin-service
+    spec:
+      containers:
+      - name: admin-service
+        image: admin-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3005
+          name: http
+        env:
+        - name: PORT
+          value: "3005"
+        - name: NODE_ENV
+          value: "production"
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: ADMIN_MONGO_URI
+              optional: true
+        - name: ADMIN_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: ADMIN_JWT_SECRET
+              optional: true
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: ADMIN_TOKEN
+        - name: SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: SERVICE_TOKEN
+        - name: MANUFACTURER_SERVICE_URL
+          value: "http://manufacturer-service:80"
+        - name: SHOPKEEPER_SERVICE_URL
+          value: "http://shopkeeper-service:80"
+        - name: PHARMA_CORE_URL
+          value: "http://pharma-core-service:80"
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 3005
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 3005
+          initialDelaySeconds: 10
+          periodSeconds: 15

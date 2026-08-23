@@ -1,31 +1,40 @@
 import express from 'express';
+import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 
 import authRouter from '../routes/auth.routes.js';
-import batchRouter from '../routes/batch.routes.js';
-import internalRouter from '../routes/internal.routes.js';
+import dashboardRouter from '../routes/dashboard.routes.js';
+import manufacturerRouter from '../routes/manufacturer.routes.js';
+import shopkeeperRouter from '../routes/shopkeeper.routes.js';
+import auditRouter from '../routes/audit.routes.js';
 
 const app = express();
 
 // ── Core Middleware ───────────────────────────────────────────────────────────
+app.use(cors({
+    origin: true,
+    credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 app.use(morgan('dev'));
 
-// ── Routes ────────────────────────────────────────────────────────────────────
-app.use('/api/manufacturer/auth', authRouter);
-app.use('/api/manufacturer/batch', batchRouter);
-app.use('/api/manufacturer/internal', internalRouter);
-
 // ── Health Probes ─────────────────────────────────────────────────────────────
 app.get('/healthz', (_req, res) => {
-    res.status(200).json({ status: 'ok', service: 'manufacturer-service', message: 'Manufacturer service is healthy' });
+    res.status(200).json({ status: 'ok', service: 'admin-service', message: 'Admin service is healthy' });
 });
 
 app.get('/readyz', (_req, res) => {
-    res.status(200).json({ status: 'ok', service: 'manufacturer-service', message: 'Manufacturer service is ready' });
+    res.status(200).json({ status: 'ok', service: 'admin-service', message: 'Admin service is ready' });
 });
+
+// ── API Routes ────────────────────────────────────────────────────────────────
+app.use('/api/admin/auth', authRouter);
+app.use('/api/admin/dashboard', dashboardRouter);
+app.use('/api/admin/manufacturers', manufacturerRouter);
+app.use('/api/admin/shopkeepers', shopkeeperRouter);
+app.use('/api/admin/audit-logs', auditRouter);
 
 // ── 404 Handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => {
@@ -38,7 +47,7 @@ app.use((err, _req, res, _next) => {
     const statusCode = err.statusCode || err.status || 500;
     const message = err.message || 'Internal server error';
 
-    console.error(`[manufacturer-service Error] ${statusCode} — ${message}`, err.stack || '');
+    console.error(`[admin-service Error] ${statusCode} — ${message}`, err.stack || '');
 
     res.status(statusCode).json({
         status: 'error',
