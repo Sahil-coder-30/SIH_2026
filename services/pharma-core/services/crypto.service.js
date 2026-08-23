@@ -2,6 +2,12 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { readKeystore, writeKeystore } from '../config/keystore.js';
 import { getCorePrivateKey, getCorePublicKey, CORE_KID } from '../config/keys.js';
+import {
+    isS3Configured,
+    uploadCsvToS3,
+    generatePresignedUrl,
+    saveLocalCsvFallback,
+} from './s3.service.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ES256_ALGORITHM = 'ES256';  // For manufacturer pack JWTs (ECDSA P-256)
@@ -388,4 +394,157 @@ export const mintPacksBatch = async (batchId, manufacturerId, expiryDate, quanti
     );
 
     return { packs, transitions };
+};
+
+// ── MINT + S3 UPLOAD ORCHESTRATOR ─────────────────────────────────────────────
+
+/**
+ * Top-level minting orchestrator for the S3 pipeline.
+ *
+ * Sequence:
+ *   1. Call mintPacksBatch()  — decrypt key once, sign N JWTs in memory (~10s for 100k)
+ *   2. Build CSV in one pass  — stream rows from the in-memory packs array (O(N) memory, no temp disk)
+ *   3. Upload CSV to S3 OR save locally (automatic fallback when AWS creds are absent)
+ *   4. Generate pre-signed download URL (or local URL for dev mode)
+ *   5. Submit MINTED transitions to pharma-backend in chunks (blockchain)
+ *
+ * What this function intentionally does NOT return:
+ *   - The raw packs[] array  → avoids 50MB HTTP payload to manufacturer-service
+ *   - Individual pack hashes → manufacturer-service no longer needs them; the CSV is the source of truth
+ *
+ * @param {string} batchId         - PharmaChain System Batch ID
+ * @param {string} manufacturerId  - Must have a stored EC key in keystore
+ * @param {string} expiryDate      - ISO date string (e.g. "2028-01-14")
+ * @param {number} quantity        - Number of packs (1 – 100,000)
+ * @param {string} medicineName    - Used in CSV filename and S3 object metadata
+ * @param {Function} submitFn      - Injected chunked blockchain submit function
+ *                                   (allows unit testing without live Fabric)
+ * @returns {Promise<{
+ *   status:                   'success',
+ *   batchId:                  string,
+ *   totalPacks:               number,
+ *   s3FileKey:                string,
+ *   s3DownloadUrl:            string,
+ *   s3UrlExpiresAt:           string|null,
+ *   s3Mode:                   'aws'|'local',
+ *   backendSubmitted:         boolean,
+ *   partialBlockchainSubmit:  boolean,
+ *   blockchainRecorded:       number,
+ *   mintedAt:                 string,
+ *   timingMs:                 { signing: number, upload: number, total: number }
+ * }>}
+ */
+export const mintAndUploadBatch = async (
+    batchId,
+    manufacturerId,
+    expiryDate,
+    quantity,
+    medicineName,
+    submitFn,
+) => {
+    const totalStart = Date.now();
+
+    // ── Step 1: Sign all packs in memory (1 scrypt + N EC signs) ─────────────
+    const { packs, transitions } = await mintPacksBatch(
+        batchId,
+        manufacturerId,
+        expiryDate,
+        quantity,
+    );
+
+    const signMs = Date.now() - totalStart;
+    console.log(`[pharma-core Crypto] mintAndUploadBatch: signed ${packs.length} packs in ${signMs}ms`);
+
+    // ── Step 2: Build CSV in one linear pass ─────────────────────────────────
+    // Columns: serialNumber,packHash,signedToken,verifyUrl,batchId,medicineName,expiryDate
+    const medNameClean = (medicineName || 'MEDICINE').replace(/[^a-zA-Z0-9_\- ]/g, '_');
+    const expStr       = expiryDate || '';
+    const VERIFY_BASE  = 'https://pharmachain.gov.in/verify';
+
+    const csvRows = ['serialNumber,packHash,signedToken,verifyUrl,batchId,medicineName,expiryDate'];
+
+    for (const p of packs) {
+        // verifyUrl encodes both the hash (path) and the full JWT (query param)
+        // - Scanned by phone camera  → opens web verification at pharmachain.gov.in
+        // - Scanned by pharma app   → app extracts packHash from URL path directly
+        const verifyUrl = `${VERIFY_BASE}/${p.packHash}?token=${p.signedToken}`;
+        csvRows.push(
+            `"${p.serial}","${p.packHash}","${p.signedToken}","${verifyUrl}","${batchId}","${medNameClean}","${expStr}"`,
+        );
+    }
+
+    const csvContent = csvRows.join('\n');
+    const uploadStart = Date.now();
+
+    // ── Step 3: Upload to S3 or save locally ─────────────────────────────────
+    let s3FileKey, s3DownloadUrl, s3UrlExpiresAt, s3Mode;
+
+    if (isS3Configured()) {
+        // ── Production path: stream to AWS S3 ────────────────────────────────
+        const uploadResult    = await uploadCsvToS3(batchId, csvContent, medicineName);
+        const presignedResult = await generatePresignedUrl(uploadResult.s3FileKey);
+
+        s3FileKey      = uploadResult.s3FileKey;
+        s3DownloadUrl  = presignedResult.s3DownloadUrl;
+        s3UrlExpiresAt = presignedResult.s3UrlExpiresAt;
+        s3Mode         = 'aws';
+    } else {
+        // ── Dev fallback path: save to ./data/exports/{batchId}.csv ──────────
+        const localResult = await saveLocalCsvFallback(batchId, csvContent);
+        s3FileKey         = localResult.s3FileKey;
+        s3DownloadUrl     = localResult.s3DownloadUrl;
+        s3UrlExpiresAt    = localResult.s3UrlExpiresAt;
+        s3Mode            = 'local';
+    }
+
+    const uploadMs = Date.now() - uploadStart;
+    console.log(`[pharma-core Crypto] CSV ${s3Mode === 'aws' ? 'uploaded to S3' : 'saved locally'} in ${uploadMs}ms`);
+
+    // ── Step 4: Submit MINTED transitions to Hyperledger Fabric ─────────────
+    // Non-fatal: packs are signed and CSV is uploaded even if Fabric is temporarily down.
+    const chunkSize      = parseInt(process.env.BATCH_CHUNK_SIZE || '250', 10);
+    let backendSubmitted = false;
+    let partialSubmit    = false;
+    let recordedHashes   = [];
+
+    if (typeof submitFn === 'function') {
+        try {
+            recordedHashes   = await submitFn(transitions, chunkSize);
+            backendSubmitted = true;
+            console.log(
+                `[pharma-core Crypto] Blockchain: ${recordedHashes.length}/${transitions.length} transitions recorded`,
+            );
+        } catch (backendErr) {
+            partialSubmit = true;
+            console.warn(
+                `[pharma-core Crypto] ⚠️  Blockchain submission failed: ${backendErr.message}. ` +
+                `CSV is already on ${s3Mode === 'aws' ? 'S3' : 'disk'} — operator can retry blockchain later.`,
+            );
+        }
+    }
+
+    const totalMs = Date.now() - totalStart;
+    console.log(
+        `[pharma-core Crypto] mintAndUploadBatch complete for ${batchId}` +
+        ` in ${totalMs}ms | mode: ${s3Mode}`,
+    );
+
+    return {
+        status:                  'success',
+        batchId,
+        totalPacks:              packs.length,
+        s3FileKey,
+        s3DownloadUrl,
+        s3UrlExpiresAt,
+        s3Mode,
+        backendSubmitted,
+        partialBlockchainSubmit: partialSubmit,
+        blockchainRecorded:      recordedHashes.length,
+        mintedAt:                new Date().toISOString(),
+        timingMs: {
+            signing: signMs,
+            upload:  uploadMs,
+            total:   totalMs,
+        },
+    };
 };

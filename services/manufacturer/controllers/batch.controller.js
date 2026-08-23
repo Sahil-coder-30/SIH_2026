@@ -1,12 +1,13 @@
 import Batch, { MINT_STATUS } from '../models/batch.model.js';
-import Pack from '../models/pack.model.js';
-import { mintBatchViaPharmaCore, recallBatchViaPharmaCore } from '../services/coreClient.service.js';
+import { mintBatchViaPharmaCore, recallBatchViaPharmaCore, fetchBatchPreviewViaPharmaCore } from '../services/coreClient.service.js';
 import crypto from 'crypto';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const MAX_QUANTITY        = 100_000; // 1 lakh packs
-const MIN_QUANTITY        = 1;
-const PACK_INSERT_CHUNK   = 1_000;   // MongoDB insertMany in batches of 1k
+const MAX_QUANTITY = 100_000; // 1 lakh packs
+const MIN_QUANTITY = 1;
+// NOTE: Pack MongoDB collection is no longer used.
+// pharma-core streams the signed CSV directly to AWS S3 and returns only a pre-signed download URL.
+// manufacturer-service stores only { s3FileKey, s3DownloadUrl, s3UrlExpiresAt } on the Batch document.
 
 // ── In-memory background job state ────────────────────────────────────────────
 // Tracks active minting jobs so the server can accept new requests immediately
@@ -35,75 +36,74 @@ const generateSystemBatchId = (manufacturerId) => {
 // ── BACKGROUND MINT JOB ───────────────────────────────────────────────────────
 
 /**
- * Runs the actual minting in the background after the HTTP response is sent.
+ * Runs the S3 pipeline minting job in the background after the HTTP 202 is sent.
  *
- * Flow:
- *   1. Call pharma-core to sign all N packs (single scrypt + N EC signs)
- *   2. Receive { packs: [{serial, packHash, signedToken}] }
- *   3. Bulk-insert packs into MongoDB in chunks of 1000
- *   4. Update batch mintStatus → 'MINTED'
+ * S3 Pipeline Flow:
+ *   1. Call pharma-core POST /core/batch/mint
+ *      → pharma-core signs all N JWTs in memory (1 scrypt + N EC signs)
+ *      → pharma-core builds CSV in one pass
+ *      → pharma-core streams CSV to AWS S3 (or local fallback in dev)
+ *      → pharma-core generates pre-signed download URL
+ *      → pharma-core commits MINTED transitions to Hyperledger Fabric
+ *   2. Receive lightweight response: { totalPacks, s3DownloadUrl, s3FileKey, s3UrlExpiresAt, s3Mode }
+ *   3. Save S3 fields on Batch document — no Pack documents are created
+ *
+ * @param {string} batchId
+ * @param {string} manufacturerId
+ * @param {string} expiryDate
+ * @param {number} totalQuantity
+ * @param {string} medicineName    - Passed to pharma-core for CSV metadata
  */
-const runMintJob = async (batchId, manufacturerId, expiryDate, totalQuantity) => {
+const runMintJob = async (batchId, manufacturerId, expiryDate, totalQuantity, medicineName) => {
     const job = { status: 'SIGNING', progress: 0, error: null };
     _mintingJobs.set(batchId, job);
 
     try {
-        console.log(`[manufacturer-service Batch] 🚀 Background mint job started — ${batchId} (${totalQuantity} packs)`);
+        console.log(
+            `[manufacturer-service Batch] 🚀 S3 Pipeline mint job started — ` +
+            `${batchId} (${totalQuantity} packs)`,
+        );
 
-        // ── Step 1: Call pharma-core to sign all packs ─────────────────────────
+        // ── Step 1: Call pharma-core — sign, build CSV, upload to S3 ──────────
+        // pharma-core returns only the S3 artifact metadata, never the raw packs array.
+        // This keeps the inter-service HTTP payload at ~200 bytes regardless of batch size.
         const mintResult = await mintBatchViaPharmaCore({
             batchId,
             manufacturerId,
             expiryDate,
-            quantity: totalQuantity,
+            quantity:    totalQuantity,
+            medicineName,
         });
 
-        console.log(`[manufacturer-service Batch] pharma-core signed ${mintResult.totalPacks} packs for ${batchId}`);
-        job.status = 'INSERTING';
+        job.status   = 'UPLOADING';
+        job.progress = 90;
 
-        // ── Step 2: Bulk-insert packs into MongoDB in chunks of 1000 ──────────
-        const packDocs = mintResult.packs.map((p) => ({
-            batchId,
-            serialNumber: p.serial,
-            packHash:     p.packHash,
-            signedToken:  p.signedToken,
-        }));
+        console.log(
+            `[manufacturer-service Batch] pharma-core completed mint for ${batchId}:` +
+            ` ${mintResult.totalPacks} packs | s3Mode: ${mintResult.s3Mode}` +
+            ` | blockchain: ${mintResult.backendSubmitted ? 'submitted' : 'deferred'}`,
+        );
 
-        let inserted = 0;
-        const totalChunks = Math.ceil(packDocs.length / PACK_INSERT_CHUNK);
-
-        for (let i = 0; i < packDocs.length; i += PACK_INSERT_CHUNK) {
-            const chunk    = packDocs.slice(i, i + PACK_INSERT_CHUNK);
-            const chunkNum = Math.floor(i / PACK_INSERT_CHUNK) + 1;
-
-            await Pack.insertMany(chunk, { ordered: false });
-            inserted += chunk.length;
-
-            const progress = Math.round((inserted / packDocs.length) * 100);
-            job.progress   = progress;
-
-            if (chunkNum % 10 === 0 || chunkNum === totalChunks) {
-                await Batch.updateOne({ batchId }, { mintedPacksCount: inserted });
-            }
-
-            console.log(
-                `[manufacturer-service Batch] Inserted chunk ${chunkNum}/${totalChunks}` +
-                ` (${inserted}/${packDocs.length} packs, ${progress}%)`,
-            );
-        }
-
-        // ── Step 3: Mark batch as fully minted ────────────────────────────────
+        // ── Step 2: Persist S3 artifact metadata on Batch document ────────────
+        // This is the ONLY database write for the entire minting flow.
+        // No Pack documents are inserted. MongoDB stays lean.
         await Batch.updateOne({ batchId }, {
             mintStatus:       'MINTED',
-            mintedPacksCount: inserted,
+            mintedPacksCount: mintResult.totalPacks,
+            s3FileKey:        mintResult.s3FileKey,
+            s3DownloadUrl:    mintResult.s3DownloadUrl,
+            s3UrlExpiresAt:   mintResult.s3UrlExpiresAt || null,
+            s3Mode:           mintResult.s3Mode,
+            mintError:        null,
         });
 
         job.status   = 'DONE';
         job.progress = 100;
 
         console.log(
-            `[manufacturer-service Batch] ✅ Mint job complete — ${batchId}` +
-            ` | ${inserted} packs | blockchain: ${mintResult.backendSubmitted ? 'submitted' : 'deferred'}` +
+            `[manufacturer-service Batch] ✅ S3 Mint complete — ${batchId}` +
+            ` | ${mintResult.totalPacks} packs | ${mintResult.s3Mode === 'aws' ? '☁️  S3' : '💾 local'}` +
+            ` | blockchain: ${mintResult.backendSubmitted ? 'submitted' : 'deferred'}` +
             (mintResult.partialBlockchainSubmit ? ' (partial)' : ''),
         );
     } catch (err) {
@@ -423,12 +423,13 @@ export const mintBatchController = async (req, res) => {
         // ── Mark as MINTING and respond immediately ────────────────────────────
         await Batch.updateOne({ batchId: batch.batchId }, { mintStatus: 'MINTING', mintError: null });
 
-        // Kick off background job using the canonical systemBatchId
+        // Kick off S3 pipeline background job using the canonical systemBatchId
         runMintJob(
             batch.batchId,
             manufacturerId,
             batch.expiryDate.toISOString().split('T')[0],
             batch.totalQuantity,
+            batch.medicineName,
         );
 
         return res.status(202).json({
@@ -609,28 +610,27 @@ export const exportBatchCsvController = async (req, res) => {
             return res.end();
         }
 
-        // ── 3. EXPORT INDIVIDUAL PACKS CSV (Default) ──────────────────────────
-        // Streams cursor from MongoDB to handle up to 1 lakh packs with minimal memory usage
-        const filename = `${sysBatchId}_PACKS_${batch.totalQuantity}.csv`;
-
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-
-        res.write('serialNumber,packHash,signedToken,verifyUrl,systemBatchId,manufacturerBatchNumber,medicineName,expiryDate\n');
-
-        const cursor = Pack.find({ batchId: batch.batchId })
-            .sort({ serialNumber: 1 })
-            .cursor();
-
-        for await (const pack of cursor) {
-            // URL contains the complete hash in the path AND the token in query params.
-            // When scanned by a phone camera -> Opens web verification.
-            // When scanned by our mobile app  -> Mobile app extracts hash directly from URL path!
-            const verifyUrl = `https://pharmachain.gov.in/verify/${pack.packHash}?token=${pack.signedToken}`;
-            res.write(`"${pack.serialNumber}","${pack.packHash}","${pack.signedToken}","${verifyUrl}","${sysBatchId}","${mfrBNo}","${medNameClean}","${expDateStr}"\n`);
+        // ── 3. EXPORT INDIVIDUAL PACKS CSV (Default) ─────────────────────────
+        // S3 Pipeline: Individual pack records are no longer stored in MongoDB.
+        // pharma-core uploaded the signed CSV directly to S3 during minting.
+        // We redirect the factory operator (or dashboard) to the pre-signed S3 download URL.
+        if (!batch.s3DownloadUrl) {
+            return res.status(404).json({
+                code:    'CSV_NOT_AVAILABLE',
+                message: `Pack CSV is not yet available for batch ${batchId}. ` +
+                         `Ensure the batch has been minted (current status: ${batch.mintStatus}).`,
+            });
         }
 
-        return res.end();
+        // Log the redirect for audit trail
+        console.log(
+            `[manufacturer-service Batch] CSV export redirect — ${sysBatchId}` +
+            ` → ${batch.s3Mode === 'aws' ? '☁️ S3' : '💾 local'}: ${batch.s3DownloadUrl.slice(0, 80)}...`,
+        );
+
+        // 302 Redirect: browser / printer / curl will follow this to the S3 pre-signed URL
+        // or to http://localhost:4000/core/export/:batchId in local dev mode.
+        return res.redirect(302, batch.s3DownloadUrl);
     } catch (error) {
         console.error('[manufacturer-service Batch] exportBatchCsvController error:', error.message);
         if (!res.headersSent) {
@@ -645,17 +645,16 @@ export const exportBatchCsvController = async (req, res) => {
 /**
  * GET /api/manufacturer/batch/:batchId/packs
  *
- * Returns paginated packs for a specific batch (for the Batch Detail drill-down table).
- * Query parameters:
- *   - page: number (default: 1)
- *   - limit: number (default: 50, max: 200)
- *   - search: string (optional serial or hash filter)
+ * S3 Pipeline: Individual pack records are no longer stored in MongoDB.
+ * pharma-core uploads the complete signed CSV directly to S3 during minting.
+ * This endpoint returns the batch S3 download URL for factory operators to retrieve all packs.
+ *
+ * For a paginated in-dashboard pack browser, the UI should parse the CSV from S3.
  */
 export const listBatchPacksController = async (req, res) => {
     try {
-        const { batchId }                      = req.params;
-        const { page = 1, limit = 50, search } = req.query;
-        const manufacturerId                   = req.user.id;
+        const { batchId }    = req.params;
+        const manufacturerId = req.user.id;
 
         const batch = await Batch.findOne({
             manufacturerId,
@@ -670,46 +669,25 @@ export const listBatchPacksController = async (req, res) => {
             return res.status(404).json({ code: 'BATCH_NOT_FOUND', message: `Batch ${batchId} not found` });
         }
 
-        const filter = { batchId: batch.batchId };
-
-        if (search) {
-            const cleanSearch = search.trim();
-            filter.$or = [
-                { serialNumber: cleanSearch },
-                { packHash:     { $regex: cleanSearch, $options: 'i' } },
-            ];
-        }
-
-        const pageNum  = Math.max(1, parseInt(page, 10));
-        const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
-        const skip     = (pageNum - 1) * limitNum;
-
-        const total = await Pack.countDocuments(filter);
-        const packs = await Pack.find(filter)
-            .sort({ serialNumber: 1 })
-            .skip(skip)
-            .limit(limitNum);
-
         return res.status(200).json({
-            status: 'success',
-            data: packs.map((p) => ({
-                serialNumber: p.serialNumber,
-                packHash:     p.packHash,
-                verifyUrl:    `https://pharmachain.gov.in/verify/${p.packHash}?token=${p.signedToken}`,
-                createdAt:    p.createdAt,
-            })),
-            meta: {
-                total,
-                page:  pageNum,
-                limit: limitNum,
-                pages: Math.ceil(total / limitNum),
-                batch: {
-                    batchId:                 batch.batchId,
-                    systemBatchId:           batch.systemBatchId,
-                    manufacturerBatchNumber: batch.manufacturerBatchNumber,
-                    medicineName:            batch.medicineName,
-                    mintStatus:              batch.mintStatus,
-                },
+            status:  'success',
+            message: 'Individual pack records are stored in S3 as a signed CSV (not in MongoDB). ' +
+                     'Download the full pack CSV using the s3DownloadUrl below.',
+            data: {
+                batchId:                 batch.batchId,
+                systemBatchId:           batch.systemBatchId,
+                manufacturerBatchNumber: batch.manufacturerBatchNumber,
+                medicineName:            batch.medicineName,
+                mintStatus:              batch.mintStatus,
+                totalQuantity:           batch.totalQuantity,
+                mintedPacksCount:        batch.mintedPacksCount,
+                s3DownloadUrl:           batch.s3DownloadUrl || null,
+                s3FileKey:               batch.s3FileKey     || null,
+                s3UrlExpiresAt:          batch.s3UrlExpiresAt || null,
+                s3Mode:                  batch.s3Mode         || null,
+                exportUrl:               batch.batchId
+                    ? `/api/manufacturer/batch/${batch.batchId}/export/csv`
+                    : null,
             },
         });
     } catch (error) {
@@ -723,11 +701,13 @@ export const listBatchPacksController = async (req, res) => {
 /**
  * GET /api/manufacturer/batch/pack/lookup/:identifier
  *
- * Universal global search across ALL batches for this manufacturer.
- * Accepts:
- *   - 64-character packHash
- *   - Raw JWT signedToken
- *   - Full verify URL ("https://pharmachain.gov.in/verify/:packHash?token=...")
+ * S3 Pipeline: Individual pack documents are no longer stored in MongoDB.
+ * To look up a specific pack, download the batch's signed CSV from S3 and search locally,
+ * or use pharma-core's hash verification endpoint (POST /core/hash/verify) which
+ * verifies the JWT signature and queries Hyperledger Fabric world state.
+ *
+ * This endpoint now extracts batchId from a packHash or JWT and returns
+ * the batch-level S3 download URL + Fabric verification guidance.
  */
 export const lookupPackGlobalController = async (req, res) => {
     try {
@@ -738,68 +718,159 @@ export const lookupPackGlobalController = async (req, res) => {
             return res.status(400).json({ code: 'MISSING_IDENTIFIER', message: 'identifier is required' });
         }
 
-        let rawSearch = decodeURIComponent(identifier).trim();
-        let targetHash = rawSearch;
-
-        // If user pasted a full verify URL, extract the packHash from path
-        if (rawSearch.includes('/verify/')) {
-            const afterVerify = rawSearch.split('/verify/')[1];
-            if (afterVerify) {
-                targetHash = afterVerify.split('?')[0].split('/')[0];
-            }
-        }
-
-        // Find pack by hash or signedToken
-        let pack = await Pack.findOne({
-            $or: [
-                { packHash: targetHash },
-                { signedToken: rawSearch },
-            ],
-        });
-
-        if (!pack) {
-            return res.status(404).json({
-                code: 'PACK_NOT_FOUND',
-                message: `No pack found matching identifier: ${targetHash}`,
-            });
-        }
-
-        // Verify this pack belongs to a batch owned by this manufacturer
-        const batch = await Batch.findOne({ batchId: pack.batchId, manufacturerId });
-        if (!batch) {
-            return res.status(403).json({
-                code: 'UNAUTHORIZED_PACK',
-                message: 'This pack does not belong to your manufacturing account',
-            });
-        }
-
         return res.status(200).json({
-            status: 'success',
-            data: {
-                pack: {
-                    serialNumber: pack.serialNumber,
-                    packHash:     pack.packHash,
-                    verifyUrl:    `https://pharmachain.gov.in/verify/${pack.packHash}?token=${pack.signedToken}`,
-                    createdAt:    pack.createdAt,
-                },
-                batch: {
-                    batchId:                 batch.batchId,
-                    systemBatchId:           batch.systemBatchId,
-                    manufacturerBatchNumber: batch.manufacturerBatchNumber,
-                    medicineName:            batch.medicineName,
-                    genericName:             batch.genericName,
-                    dosage:                  batch.dosage,
-                    expiryDate:              batch.expiryDate,
-                    manufacturingDate:       batch.manufacturingDate,
-                    productionSite:          batch.productionSite,
-                    manufacturingLicenseNo:  batch.manufacturingLicenseNo,
-                    mintStatus:              batch.mintStatus,
-                    totalQuantity:           batch.totalQuantity,
-                },
+            status:  'info',
+            message: 'Individual pack records are not stored in MongoDB in the S3 pipeline architecture. ' +
+                     'To verify a specific pack, use pharma-core\'s hash verification endpoint. ' +
+                     'To browse all packs in a batch, download the batch CSV from the s3DownloadUrl.',
+            guidance: {
+                verifyPack:        'POST /core/hash/verify  — { token: "<signedJWT>" }',
+                downloadBatchCsv:  'GET /api/manufacturer/batch/:batchId/export/csv  → 302 redirect to S3 URL',
+                listBatchDetails:  'GET /api/manufacturer/batch/:batchId',
             },
+            providedIdentifier: identifier,
         });
     } catch (error) {
         console.error('[manufacturer-service Batch] lookupPackGlobalController error:', error.message);
         return res.status(500).json({ code: 'PACK_LOOKUP_ERROR', message: error.message });
+    }
+};
+
+// ── BATCH PACK PREVIEW (Dashboard UI Table) ────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/manufacturer/batch/:batchId/preview
+ *
+ * Returns paginated, searchable pack data from the batch's signed CSV.
+ * This is the API that powers the "Batch Preview" page on the manufacturer dashboard —
+ * the rich table shown after minting completes, displaying all QR codes and signed tokens.
+ *
+ * Architecture:
+ *   manufacturer-service → calls pharma-core GET /core/export/:batchId/preview
+ *   pharma-core reads CSV (local disk or S3) → parses → paginates → returns JSON
+ *   manufacturer-service enriches response with full Batch metadata → returns to dashboard
+ *
+ * Query Parameters:
+ *   - page:   number  (default: 1)
+ *   - limit:  number  (default: 50, max: 200)
+ *   - search: string  (optional — filter by serial number, pack hash prefix, or medicine name)
+ *
+ * Response:
+ * {
+ *   status: 'success',
+ *   batch: { batchId, medicineName, dosage, expiryDate, mintStatus, totalQuantity,
+ *            s3DownloadUrl, s3Mode, exportUrl, ... },
+ *   stats: { totalPacks, filteredPacks, csvSizeBytes },
+ *   meta:  { page, limit, pages, total },
+ *   packs: [{ serialNumber, packHash, signedToken, verifyUrl, qrPreviewUrl, medicineName, expiryDate }]
+ * }
+ */
+export const previewBatchPacksController = async (req, res) => {
+    try {
+        const { batchId }    = req.params;
+        const manufacturerId = req.user.id;
+        const page           = Math.max(1, parseInt(req.query.page  || '1',  10));
+        const limit          = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
+        const search         = (req.query.search || '').trim();
+
+        // ── 1. Verify batch ownership ─────────────────────────────────────────
+        const batch = await Batch.findOne({
+            manufacturerId,
+            $or: [
+                { batchId },
+                { systemBatchId: batchId },
+                { manufacturerBatchNumber: batchId },
+            ],
+        });
+
+        if (!batch) {
+            return res.status(404).json({ code: 'BATCH_NOT_FOUND', message: `Batch ${batchId} not found` });
+        }
+
+        // ── 2. Batch must be fully minted before preview is available ─────────
+        if (batch.mintStatus !== 'MINTED' && batch.mintStatus !== 'RECALLED') {
+            return res.status(400).json({
+                code:    'BATCH_NOT_MINTED',
+                message: `Preview is only available after minting is complete. Current status: ${batch.mintStatus}`,
+                data: {
+                    mintStatus: batch.mintStatus,
+                    pollUrl:    `/api/manufacturer/batch/${batch.batchId}`,
+                },
+            });
+        }
+
+        // ── 3. Must have a CSV artifact (s3FileKey set after S3 pipeline mint) ─
+        if (!batch.s3FileKey) {
+            return res.status(404).json({
+                code:    'CSV_NOT_AVAILABLE',
+                message: `No CSV artifact found for batch ${batchId}. The batch may have been minted before the S3 pipeline upgrade.`,
+            });
+        }
+
+        // ── 4. Proxy preview request to pharma-core ───────────────────────────
+        // pharma-core reads the CSV (local or S3), parses it, paginates, returns JSON.
+        const previewData = await fetchBatchPreviewViaPharmaCore({
+            batchId:   batch.batchId,
+            s3FileKey: batch.s3FileKey,
+            page,
+            limit,
+            search,
+        });
+
+        // ── 5. Enrich with full batch metadata for dashboard ──────────────────
+        return res.status(200).json({
+            status: 'success',
+            batch: {
+                // Identifiers
+                batchId:                 batch.batchId,
+                systemBatchId:           batch.systemBatchId,
+                manufacturerBatchNumber: batch.manufacturerBatchNumber,
+                // Product
+                medicineName:            batch.medicineName,
+                genericName:             batch.genericName,
+                brandName:               batch.brandName,
+                dosage:                  batch.dosage,
+                strength:                batch.strength,
+                form:                    batch.form,
+                composition:             batch.composition,
+                therapeuticCategory:     batch.therapeuticCategory,
+                // Dates
+                expiryDate:              batch.expiryDate,
+                manufacturingDate:       batch.manufacturingDate,
+                // Regulatory
+                manufacturingLicenseNo:  batch.manufacturingLicenseNo,
+                cdscoApprovalNo:         batch.cdscoApprovalNo,
+                drugSchedule:            batch.drugSchedule,
+                // Status
+                mintStatus:              batch.mintStatus,
+                totalQuantity:           batch.totalQuantity,
+                mintedPacksCount:        batch.mintedPacksCount,
+                // S3 Artifact
+                s3Mode:                  batch.s3Mode,
+                s3DownloadUrl:           batch.s3DownloadUrl,
+                s3FileKey:               batch.s3FileKey,
+                s3UrlExpiresAt:          batch.s3UrlExpiresAt,
+                // Convenience URL for factory printer download (redirects to S3 URL)
+                exportUrl:               `/api/manufacturer/batch/${batch.batchId}/export/csv`,
+            },
+            // CSV stats from pharma-core
+            stats: previewData.stats,
+            // Pagination
+            meta:  previewData.meta,
+            // Paginated pack rows for the UI table
+            packs: previewData.packs,
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Batch] previewBatchPacksController error:', error.message);
+
+        // If pharma-core is unreachable, return helpful error with fallback download URL
+        if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
+            return res.status(503).json({
+                code:    'PHARMA_CORE_UNAVAILABLE',
+                message: 'Unable to reach pharma-core to fetch pack preview. Download the CSV directly using the batch exportUrl.',
+            });
+        }
+
+        return res.status(500).json({ code: 'PREVIEW_ERROR', message: error.message });
     }
 };

@@ -10,6 +10,7 @@ import {
     exportBatchCsvController,
     listBatchPacksController,
     lookupPackGlobalController,
+    previewBatchPacksController,
 } from '../controllers/batch.controller.js';
 
 const router = express.Router();
@@ -34,10 +35,15 @@ router.get('/', listBatchesController);
 // GET /api/manufacturer/batch/:batchId — get a specific batch and active mint progress
 router.get('/:batchId', getBatchController);
 
-// GET /api/manufacturer/batch/:batchId/packs — paginated pack table browser inside batch detail
+// GET /api/manufacturer/batch/:batchId/preview — paginated pack preview table for dashboard UI
+// Reads the batch CSV (from S3 or local disk), parses it, and returns searchable/paginated JSON.
+// Powers the "Batch Preview" page shown after minting completes. Supports ?page, ?limit, ?search.
+router.get('/:batchId/preview', previewBatchPacksController);
+
+// GET /api/manufacturer/batch/:batchId/packs — returns S3 download URL info (no Pack docs in MongoDB)
 router.get('/:batchId/packs', listBatchPacksController);
 
-// GET /api/manufacturer/batch/:batchId/export/csv — download CSV of QRs (packs, boxes, or cartons)
+// GET /api/manufacturer/batch/:batchId/export/csv — download CSV (302 redirect to S3 pre-signed URL)
 router.get('/:batchId/export/csv', exportBatchCsvController);
 
 // POST /api/manufacturer/batch/:batchId/mint — trigger asynchronous minting (HTTP 202)

@@ -99,9 +99,26 @@ const BatchSchema = new mongoose.Schema(
         recallReason:       { type: String, default: null },
         tags:               [{ type: String }],   // ["ANTIBACTERIAL", "HIGH_DEMAND", "Q3-2026"]
 
-        // ── Mint Progress Tracking (for 1 lakh pack background jobs) ───────────
+        // ── Mint Progress Tracking (for background jobs) ────────────────────
         mintedPacksCount: { type: Number, default: 0 },
         mintError:        { type: String, default: null },
+
+        // ── S3 CSV Artifact (populated after minting) ───────────────────────
+        // S3 object key for the signed QR CSV file, e.g. "batches/PC-BATCH-....csv"
+        // Used to re-generate a fresh pre-signed URL if s3UrlExpiresAt has passed.
+        s3FileKey:      { type: String, default: null },
+
+        // Pre-signed AWS S3 URL (valid for S3_URL_EXPIRY_SECONDS, default 7 days)
+        // OR http://localhost:4000/core/export/:batchId in local dev mode.
+        // Factory operators use this URL to download the QR CSV directly to printers.
+        s3DownloadUrl:  { type: String, default: null },
+
+        // ISO timestamp when the pre-signed URL expires.
+        // null = local dev mode (no expiry). Used to trigger URL refresh in the dashboard.
+        s3UrlExpiresAt: { type: String, default: null },
+
+        // Storage mode reported by pharma-core: "aws" | "local"
+        s3Mode:         { type: String, enum: ['aws', 'local', null], default: null },
     },
     { timestamps: true },
 );

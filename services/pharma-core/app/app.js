@@ -9,6 +9,7 @@ import chainRouter from '../routes/chain.routes.js';
 import jwksRouter  from '../routes/jwks.routes.js';
 import { getJwksController } from '../controllers/jwks.controller.js';
 import { getCorePrivateKey, getCorePublicKey } from '../config/keys.js';
+import { localExportDownloadController, exportPreviewController } from '../controllers/export.controller.js';
 
 const app = express();
 
@@ -85,6 +86,20 @@ app.use('/core/hash', hashRouter);
 
 // Blockchain transition submission routes
 app.use('/core/chain', chainRouter);
+
+// ── Local CSV Export (Dev Fallback Only — no auth, internal ClusterIP only) ───
+// In production: factory printers download directly from the S3 pre-signed URL.
+// In development (no AWS creds configured): pharma-core saves CSV to ./data/exports/
+//   and returns http://localhost:4000/core/export/:batchId as the "s3DownloadUrl".
+// This route streams that file back.
+app.get('/core/export/:batchId', localExportDownloadController);
+
+// ── CSV Preview API (paginated JSON for dashboard UI) ─────────────────────────
+// GET /core/export/:batchId/preview?page=1&limit=50&search=&s3FileKey=...
+// Reads the CSV (local disk or S3), parses it, and returns paginated JSON.
+// Called internally by manufacturer-service's /api/manufacturer/batch/:batchId/preview.
+// IMPORTANT: registered AFTER the exact /core/export/:batchId route so it doesn't conflict.
+app.get('/core/export/:batchId/preview', exportPreviewController);
 
 // ── 404 Handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => {

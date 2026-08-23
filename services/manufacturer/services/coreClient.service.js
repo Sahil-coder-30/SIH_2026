@@ -19,8 +19,11 @@ const getCoreClient = (authToken) =>
             'X-Service-Token': SERVICE_TOKEN,
             'Content-Type': 'application/json',
         },
-        timeout:          180_000,   // 3 minutes — allows pharma-core to sign 1 lakh packs + chunked fabric submit
-        maxContentLength: Infinity,  // Accommodate large response payloads (100k pack objects)
+        // S3 Pipeline: pharma-core no longer returns 100k pack objects.
+        // Response is now a ~200-byte JSON with s3DownloadUrl + s3FileKey.
+        // Timeout is kept generous (3 min) to cover signing (10-20s) + S3 upload (10-30s) + Fabric submit.
+        timeout:          180_000,
+        maxContentLength: Infinity,
         maxBodyLength:    Infinity,
     });
 
@@ -39,18 +42,43 @@ export const generateKeyForManufacturer = async (manufacturerId, authToken) => {
 };
 
 /**
- * Requests pharma-core to mint all packs in a batch (sign JWTs + register on Fabric).
- * @param {Object} params - { batchId, manufacturerId, expiryDate, quantity, authToken }
- * @returns {Promise<{ batchId: string, packs: Array<{ serial, packHash, signedToken }>, totalPacks: number, backendSubmitted: boolean, partialBlockchainSubmit: boolean }>}
+ * Requests pharma-core to mint all packs in a batch via the S3 pipeline.
+ *
+ * pharma-core will:
+ *   1. Sign N JWTs in memory (1 scrypt + N EC signs)
+ *   2. Build the signed CSV in one pass
+ *   3. Upload CSV to AWS S3 (or local fallback in dev)
+ *   4. Generate a pre-signed download URL
+ *   5. Submit MINTED transitions to Hyperledger Fabric
+ *
+ * @param {Object} params - { batchId, manufacturerId, expiryDate, quantity, medicineName, authToken }
+ * @returns {Promise<{
+ *   status:                  'success',
+ *   batchId:                 string,
+ *   totalPacks:              number,
+ *   s3FileKey:               string,
+ *   s3DownloadUrl:           string,
+ *   s3UrlExpiresAt:          string|null,
+ *   s3Mode:                  'aws'|'local',
+ *   backendSubmitted:        boolean,
+ *   partialBlockchainSubmit: boolean,
+ *   blockchainRecorded:      number,
+ *   mintedAt:                string,
+ *   timingMs:                { signing: number, upload: number, total: number }
+ * }>}
  */
-export const mintBatchViaPharmaCore = async ({ batchId, manufacturerId, expiryDate, quantity, authToken }) => {
+export const mintBatchViaPharmaCore = async ({ batchId, manufacturerId, expiryDate, quantity, medicineName, authToken }) => {
     const response = await getCoreClient(authToken).post('/core/batch/mint', {
         batchId,
         manufacturerId,
         expiryDate,
         quantity,
+        medicineName: medicineName || '',   // Used for CSV metadata in pharma-core
     });
-    console.log(`[manufacturer-service CoreClient] Batch ${batchId} minted — ${quantity} packs signed by pharma-core`);
+    console.log(
+        `[manufacturer-service CoreClient] pharma-core S3 mint complete for ${batchId}` +
+        ` — ${response.data.totalPacks} packs | mode: ${response.data.s3Mode}`,
+    );
     return response.data;
 };
 
@@ -64,3 +92,55 @@ export const recallBatchViaPharmaCore = async ({ batchId, manufacturerId, reason
     console.log(`[manufacturer-service CoreClient] Recall initiated for batch ${batchId}`);
     return response.data;
 };
+
+/**
+ * Fetches paginated, searchable pack preview data from pharma-core's CSV preview API.
+ * pharma-core reads the CSV (local disk or S3), parses it, and returns structured JSON.
+ *
+ * This is the data source for the manufacturer dashboard's "Batch Preview" page —
+ * the table that shows all signed packs after minting is complete.
+ *
+ * @param {Object} params
+ * @param {string}      params.batchId    - PharmaChain system batch ID
+ * @param {string|null} params.s3FileKey  - S3 object key (from Batch.s3FileKey), null in local mode
+ * @param {number}      params.page       - Page number (1-indexed)
+ * @param {number}      params.limit      - Items per page (max 200)
+ * @param {string}      params.search     - Optional search term (serial, hash prefix, or medicine name)
+ * @param {string}      [params.authToken]
+ * @returns {Promise<{
+ *   status:  'success',
+ *   batchId: string,
+ *   s3Mode:  'aws'|'local',
+ *   stats:   { totalPacks: number, filteredPacks: number, csvSizeBytes: number },
+ *   meta:    { page: number, limit: number, pages: number, total: number },
+ *   packs:   Array<{ serialNumber, packHash, signedToken, verifyUrl, medicineName, expiryDate, qrPreviewUrl }>
+ * }>}
+ */
+export const fetchBatchPreviewViaPharmaCore = async ({
+    batchId,
+    s3FileKey,
+    page    = 1,
+    limit   = 50,
+    search  = '',
+    authToken,
+}) => {
+    const response = await getCoreClient(authToken).get(
+        `/core/export/${encodeURIComponent(batchId)}/preview`,
+        {
+            params: {
+                page,
+                limit,
+                search: search || undefined,
+                s3FileKey: s3FileKey || undefined,
+            },
+            // CSV for 100k packs is ~60MB uncompressed — give it time to load + parse
+            timeout: 60_000,
+        },
+    );
+    console.log(
+        `[manufacturer-service CoreClient] Preview fetched for ${batchId}` +
+        ` | page ${page} | ${response.data.stats?.totalPacks} total packs`,
+    );
+    return response.data;
+};
+

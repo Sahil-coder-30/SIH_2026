@@ -1,32 +1,58 @@
-import { mintPacksBatch } from '../services/crypto.service.js';
+import { mintAndUploadBatch } from '../services/crypto.service.js';
 import { submitTransitionBatchChunked } from '../services/backendClient.service.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const MAX_QUANTITY   = 100_000;
-const MIN_QUANTITY   = 1;
+const MAX_QUANTITY = 100_000;
+const MIN_QUANTITY = 1;
 
 /**
  * POST /core/batch/mint
  *
- * Mints a pharmaceutical batch: signs N JWTs (ES256), derives N pack hashes,
- * constructs N MFG transitions, and submits them to pharma-backend in chunks.
+ * S3 Pipeline Mint Controller.
  *
- * Performance characteristics:
- *   - Private key is decrypted ONCE (1 scrypt call, ~100-150ms), regardless of N.
- *   - All N JWTs are signed in-memory (~0.1ms/pack).
- *   - Transitions are submitted to pharma-backend in chunks of BATCH_CHUNK_SIZE
- *     (default 250), each resulting in one Fabric block commit.
+ * Signs N pharmaceutical pack JWTs (ES256), builds a CSV, uploads it to AWS S3
+ * (or local fallback in dev mode), commits MINTED transitions to Hyperledger Fabric,
+ * and returns a lightweight JSON response containing only the S3 download URL.
+ *
+ * KEY CHANGE from old architecture:
+ *   ❌ OLD: returned { packs: [ 100k objects ] } — 50MB HTTP payload to manufacturer-service
+ *   ✅ NEW: returns { s3DownloadUrl, s3FileKey, totalPacks } — ~200 byte payload
+ *
+ * Performance characteristics (100k packs):
+ *   - Private key decrypted ONCE (1 scrypt, ~150ms)
+ *   - All JWTs signed in memory (~10s for 100k at ~0.1ms/pack)
+ *   - CSV built in one pass (~500ms for 100k rows)
+ *   - S3 multipart upload (~5-15s depending on network)
+ *   - Total: ~20-30s  (vs ~4.1 hours naive per-pack approach)
  *
  * Request body:
- *   { batchId: string, manufacturerId: string, expiryDate: string, quantity: number }
+ *   {
+ *     batchId:        string,   // PharmaChain system batch ID (e.g. "PC-BATCH-CIPLA0-...")
+ *     manufacturerId: string,   // Must have a stored EC key in keystore
+ *     expiryDate:     string,   // ISO date (e.g. "2028-01-14")
+ *     quantity:       number,   // 1 – 100,000
+ *     medicineName:   string    // Used in CSV metadata (e.g. "Amoxicillin 625mg")
+ *   }
  *
- * Response:
- *   { status, batchId, totalPacks, packs: [{serial, packHash, signedToken}],
- *     backendSubmitted, partialBlockchainSubmit, mintedAt }
+ * Response (success):
+ *   {
+ *     status:                  "success",
+ *     batchId:                 string,
+ *     totalPacks:              number,
+ *     s3FileKey:               string,    // S3 object key, e.g. "batches/PC-BATCH-....csv"
+ *     s3DownloadUrl:           string,    // Pre-signed URL (AWS) or http://localhost:4000/core/export/... (dev)
+ *     s3UrlExpiresAt:          string,    // ISO timestamp when URL expires (null for local mode)
+ *     s3Mode:                  "aws"|"local",
+ *     backendSubmitted:        boolean,
+ *     partialBlockchainSubmit: boolean,
+ *     blockchainRecorded:      number,
+ *     mintedAt:                string,
+ *     timingMs:                { signing, upload, total }
+ *   }
  */
 export const mintBatchController = async (req, res) => {
     try {
-        const { batchId, manufacturerId, expiryDate, quantity } = req.body;
+        const { batchId, manufacturerId, expiryDate, quantity, medicineName } = req.body;
 
         // ── Input validation ─────────────────────────────────────────────────
         if (!batchId || !manufacturerId || !expiryDate || quantity == null) {
@@ -53,70 +79,28 @@ export const mintBatchController = async (req, res) => {
         }
 
         console.log(
-            `[pharma-core Batch] mintBatch start — batchId: ${batchId}, ` +
-            `manufacturerId: ${manufacturerId}, quantity: ${qty}`,
+            `[pharma-core Batch] mintBatch (S3 pipeline) start — batchId: ${batchId}, ` +
+            `manufacturerId: ${manufacturerId}, quantity: ${qty}, ` +
+            `medicineName: "${medicineName || 'N/A'}"`,
         );
 
-        const mintStart = Date.now();
-
-        // ── Optimized bulk signing (1 scrypt + N EC signs) ───────────────────
-        // mintPacksBatch decrypts the manufacturer's EC private key exactly ONCE,
-        // then signs all packs in a tight in-memory loop. See crypto.service.js.
-        const { packs, transitions } = await mintPacksBatch(
+        // ── Orchestrated mint + upload ────────────────────────────────────────
+        // mintAndUploadBatch handles: 1 scrypt decrypt → N EC signs → CSV build → S3 upload → Fabric submit
+        // submitTransitionBatchChunked is injected so it can be mocked in tests
+        const result = await mintAndUploadBatch(
             batchId,
             manufacturerId,
             expiryDate,
             qty,
+            medicineName || '',
+            submitTransitionBatchChunked, // injected blockchain submit function
         );
 
-        const signMs = Date.now() - mintStart;
-        console.log(`[pharma-core Batch] Signed ${packs.length} packs in ${signMs}ms`);
+        return res.status(200).json(result);
 
-        // ── Chunked blockchain submission ─────────────────────────────────────
-        // Submit transitions to pharma-backend in chunks of BATCH_CHUNK_SIZE.
-        // Each chunk becomes one Fabric block (idempotent — safe to retry).
-        // A failure in any chunk is non-fatal: we return packs and flag partial state.
-        const chunkSize         = parseInt(process.env.BATCH_CHUNK_SIZE || '250', 10);
-        let   backendSubmitted  = false;
-        let   partialSubmit     = false;
-        let   recordedHashes    = [];
-
-        try {
-            recordedHashes   = await submitTransitionBatchChunked(transitions, chunkSize);
-            backendSubmitted = true;
-            console.log(
-                `[pharma-core Batch] Blockchain submission complete — ` +
-                `${recordedHashes.length}/${transitions.length} transitions recorded`,
-            );
-        } catch (backendErr) {
-            partialSubmit = true;
-            console.warn(
-                `[pharma-core Batch] ⚠️  Blockchain submission partially failed: ${backendErr.message}. ` +
-                `Packs are signed and returned — manufacturer-service can retry missing transitions.`,
-            );
-        }
-
-        const totalMs = Date.now() - mintStart;
-        console.log(`[pharma-core Batch] mintBatch complete for ${batchId} in ${totalMs}ms`);
-
-        return res.status(200).json({
-            status:                 'success',
-            batchId,
-            totalPacks:             packs.length,
-            packs,
-            backendSubmitted,
-            partialBlockchainSubmit: partialSubmit,
-            blockchainRecorded:     recordedHashes.length,
-            mintedAt:               new Date().toISOString(),
-            timingMs: {
-                signing:    signMs,
-                total:      totalMs,
-            },
-        });
     } catch (error) {
         console.error('[pharma-core Batch] mintBatchController error:', error.message);
 
-        // Distinguish key-not-found from generic server errors
         if (error.message.includes('No key found for manufacturer')) {
             return res.status(404).json({
                 code:    'KEY_NOT_FOUND',
