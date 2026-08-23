@@ -13,6 +13,15 @@ spec:
   rules:
   - http:
       paths:
+      # ── Admin Service Route ─────────────────────────────────────────────────
+      - pathType: Prefix
+        path: "/api/admin"
+        backend:
+          service:
+            name: admin-service
+            port:
+              number: 80
+
       # ── Manufacturer Service Route ──────────────────────────────────────────
       - pathType: Prefix
         path: "/api/manufacturer"

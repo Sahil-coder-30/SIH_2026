@@ -388,21 +388,306 @@ export const kycApproveController = async (req, res) => {
         }
 
         // Update both verificationStatus (shopkeeper-specific) and kycStatus (shared field)
-        shopkeeper.verificationStatus = 'APPROVED';
-        if (shopkeeper.kycStatus !== undefined) shopkeeper.kycStatus = 'APPROVED';
+        shopkeeper.verificationStatus = 'approved';
+        if (shopkeeper.kycStatus !== undefined) shopkeeper.kycStatus = 'approved';
+        shopkeeper.verifiedAt = new Date();
+        shopkeeper.rejectionReason = null;
         await shopkeeper.save();
 
         console.log(`[shopkeeper-service Auth] KYC approved: ${shopkeeper.shopId}`);
 
         return res.status(200).json({
-            status:         'success',
-            message:        `${shopkeeper.shop?.name || shopkeeper.shopId} approved. They can now log in.`,
-            shopkeeperId:   shopkeeper.shopId,
-            shopName:       shopkeeper.shop?.name || null,
-            verificationStatus: 'APPROVED',
+            status:             'success',
+            message:            `${shopkeeper.shop?.name || shopkeeper.shopId} approved. They can now log in.`,
+            shopkeeperId:       shopkeeper.shopId,
+            shopName:           shopkeeper.shop?.name || null,
+            verificationStatus: 'approved',
+            verifiedAt:         shopkeeper.verifiedAt,
         });
     } catch (err) {
         console.error('[shopkeeper-service Auth] kycApproveController:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// ── KYC Reject — POST /api/shopkeeper/auth/kyc/reject ─────────────────────────
+export const kycRejectController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { shopkeeperId, email, reason } = req.body;
+        if (!shopkeeperId && !email) {
+            return res.status(400).json({ status: 'error', message: 'shopkeeperId or email is required' });
+        }
+
+        const query = shopkeeperId
+            ? { shopId: shopkeeperId }
+            : { 'authentication.email': email.toLowerCase() };
+
+        const shopkeeper = await Shopkeeper.findOne(query);
+        if (!shopkeeper) {
+            return res.status(404).json({ status: 'error', message: 'Shopkeeper not found' });
+        }
+
+        shopkeeper.verificationStatus = 'rejected';
+        shopkeeper.rejectionReason = reason || 'License verification rejected by regulatory authority.';
+        await shopkeeper.save();
+
+        console.log(`[shopkeeper-service Auth] KYC rejected: ${shopkeeper.shopId}`);
+
+        return res.status(200).json({
+            status:             'success',
+            message:            `${shopkeeper.shop?.name || shopkeeper.shopId} rejected.`,
+            shopkeeperId:       shopkeeper.shopId,
+            shopName:           shopkeeper.shop?.name || null,
+            verificationStatus: 'rejected',
+            rejectionReason:    shopkeeper.rejectionReason,
+        });
+    } catch (err) {
+        console.error('[shopkeeper-service Auth] kycRejectController:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// ── Suspend License — POST /api/shopkeeper/auth/kyc/suspend ───────────────────
+export const kycSuspendController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { shopkeeperId, email, reason } = req.body;
+        if (!shopkeeperId && !email) {
+            return res.status(400).json({ status: 'error', message: 'shopkeeperId or email is required' });
+        }
+
+        const query = shopkeeperId
+            ? { shopId: shopkeeperId }
+            : { 'authentication.email': email.toLowerCase() };
+
+        const shopkeeper = await Shopkeeper.findOne(query);
+        if (!shopkeeper) {
+            return res.status(404).json({ status: 'error', message: 'Shopkeeper not found' });
+        }
+
+        shopkeeper.verificationStatus = 'suspended';
+        shopkeeper.rejectionReason = reason || 'License suspended by regulatory authority.';
+        await shopkeeper.save();
+
+        console.log(`[shopkeeper-service Auth] KYC suspended: ${shopkeeper.shopId}`);
+
+        return res.status(200).json({
+            status:             'success',
+            message:            `${shopkeeper.shop?.name || shopkeeper.shopId} suspended.`,
+            shopkeeperId:       shopkeeper.shopId,
+            shopName:           shopkeeper.shop?.name || null,
+            verificationStatus: 'suspended',
+            rejectionReason:    shopkeeper.rejectionReason,
+        });
+    } catch (err) {
+        console.error('[shopkeeper-service Auth] kycSuspendController:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// ── Internal List — GET /api/shopkeeper/internal/list ─────────────────────────
+export const internalListController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { status, licenseType, city, search, page = 1, limit = 10 } = req.query;
+        const query = {};
+
+        if (status && status.toLowerCase() !== 'all') {
+            query.verificationStatus = new RegExp(`^${status.trim()}$`, 'i');
+        }
+
+        if (licenseType && licenseType.toLowerCase() !== 'all') {
+            query['license.licenseType'] = licenseType.toLowerCase().trim();
+        }
+
+        if (city) {
+            query['shop.city'] = new RegExp(city.trim(), 'i');
+        }
+
+        if (search) {
+            const regex = new RegExp(search.trim(), 'i');
+            query.$or = [
+                { 'shop.name': regex },
+                { 'owner.name': regex },
+                { 'license.drugLicenseNumber': regex },
+                { 'authentication.email': regex },
+                { 'shop.email': regex },
+                { 'shop.city': regex },
+                { shopId: regex },
+            ];
+        }
+
+        const pageNum  = Math.max(1, parseInt(page, 10) || 1);
+        const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
+        const skip     = (pageNum - 1) * limitNum;
+
+        const [records, total] = await Promise.all([
+            Shopkeeper.find(query)
+                .select('-authentication.passwordHash -authentication.refreshTokenHash -authentication.passwordResetToken')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limitNum)
+                .lean(),
+            Shopkeeper.countDocuments(query),
+        ]);
+
+        const data = records.map(r => ({
+            shopId:             r.shopId,
+            shopName:           r.shop?.name,
+            shopPhone:          r.shop?.phone,
+            shopEmail:          r.shop?.email,
+            address:            r.shop?.address,
+            city:               r.shop?.city,
+            state:              r.shop?.state,
+            pincode:            r.shop?.pincode,
+            ownerName:          r.owner?.name,
+            ownerPhone:         r.owner?.phone,
+            ownerEmail:         r.owner?.email,
+            drugLicenseNumber:  r.license?.drugLicenseNumber,
+            licenseType:        r.license?.licenseType,
+            issuingAuthority:   r.license?.issuingAuthority,
+            licenseIssueDate:   r.license?.issueDate,
+            licenseExpiryDate:  r.license?.expiryDate,
+            documentUrl:        r.license?.documentUrl,
+            documentMeta:       r.license?.documentMeta,
+            verificationStatus: r.verificationStatus,
+            rejectionReason:    r.rejectionReason,
+            verifiedAt:         r.verifiedAt,
+            createdAt:          r.createdAt,
+        }));
+
+        return res.status(200).json({
+            status: 'success',
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total,
+                totalPages: Math.ceil(total / limitNum),
+            },
+            data,
+        });
+    } catch (err) {
+        console.error('[shopkeeper-service Auth] internalListController:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// ── Internal Detail — GET /api/shopkeeper/internal/:id ────────────────────────
+export const internalDetailController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { id } = req.params;
+        const r = await Shopkeeper.findOne({
+            $or: [{ shopId: id }, { 'authentication.email': id.toLowerCase() }],
+        }).select('-authentication.passwordHash -authentication.refreshTokenHash').lean();
+
+        if (!r) {
+            return res.status(404).json({ status: 'error', message: 'Shopkeeper not found' });
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                shopId:             r.shopId,
+                shopName:           r.shop?.name,
+                shopPhone:          r.shop?.phone,
+                shopEmail:          r.shop?.email,
+                address:            r.shop?.address,
+                city:               r.shop?.city,
+                state:              r.shop?.state,
+                pincode:            r.shop?.pincode,
+                ownerName:          r.owner?.name,
+                ownerPhone:         r.owner?.phone,
+                ownerEmail:         r.owner?.email,
+                drugLicenseNumber:  r.license?.drugLicenseNumber,
+                licenseType:        r.license?.licenseType,
+                issuingAuthority:   r.license?.issuingAuthority,
+                licenseIssueDate:   r.license?.issueDate,
+                licenseExpiryDate:  r.license?.expiryDate,
+                documentUrl:        r.license?.documentUrl,
+                documentMeta:       r.license?.documentMeta,
+                verificationStatus: r.verificationStatus,
+                rejectionReason:    r.rejectionReason,
+                verifiedAt:         r.verifiedAt,
+                createdAt:          r.createdAt,
+            },
+        });
+    } catch (err) {
+        console.error('[shopkeeper-service Auth] internalDetailController:', err.message);
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+};
+
+// ── Internal Stats — GET /api/shopkeeper/internal/stats ───────────────────────
+export const internalStatsController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const [total, pending, approved, rejected, suspended] = await Promise.all([
+            Shopkeeper.countDocuments({}),
+            Shopkeeper.countDocuments({ verificationStatus: { $in: ['pending', 'PENDING'] } }),
+            Shopkeeper.countDocuments({ verificationStatus: { $in: ['approved', 'APPROVED', 'verified', 'VERIFIED'] } }),
+            Shopkeeper.countDocuments({ verificationStatus: { $in: ['rejected', 'REJECTED'] } }),
+            Shopkeeper.countDocuments({ verificationStatus: { $in: ['suspended', 'SUSPENDED'] } }),
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                total,
+                pending,
+                approved,
+                rejected,
+                suspended,
+            },
+        });
+    } catch (err) {
+        console.error('[shopkeeper-service Auth] internalStatsController:', err.message);
         return res.status(500).json({ status: 'error', message: err.message });
     }
 };

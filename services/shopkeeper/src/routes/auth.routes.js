@@ -7,6 +7,8 @@ import {
     forgotPasswordController,
     resetPasswordController,
     kycApproveController,
+    kycRejectController,
+    kycSuspendController,
     logoutController,
 } from '../controllers/auth.controller.js';
 import { identifyUser } from '../middleware/identifyUser.middleware.js';
@@ -33,6 +35,12 @@ router.post('/reset-password', resetPasswordController);
 // POST /api/shopkeeper/auth/kyc/approve → admin-only, X-Admin-Token header required
 // Sets verificationStatus = 'APPROVED'. Without this, login always returns 403.
 router.post('/kyc/approve', kycApproveController);
+
+// POST /api/shopkeeper/auth/kyc/reject → admin-only, X-Admin-Token header required
+router.post('/kyc/reject', kycRejectController);
+
+// POST /api/shopkeeper/auth/kyc/suspend → admin-only, X-Admin-Token header required
+router.post('/kyc/suspend', kycSuspendController);
 
 // ── Protected Auth Routes ─────────────────────────────────────────────────────
 

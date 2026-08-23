@@ -8,6 +8,7 @@ import transactionRouter from '../routes/transaction.routes.js';
 import scanRouter from '../routes/scan.routes.js';
 import medicineScanRouter from '../routes/medicineScan.routes.js';
 import customerScanRouter from '../routes/customerScan.routes.js';
+import internalRouter from '../routes/internal.routes.js';
 
 const app = express();
 
@@ -25,6 +26,9 @@ app.get('/readyz', (_req, res) => {
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
+
+// 0. Internal Admin Routes
+app.use('/api/shopkeeper/internal', internalRouter);
 
 // 1. Auth & Account Management
 app.use('/api/shopkeeper/auth', authRouter);

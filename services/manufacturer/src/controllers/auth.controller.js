@@ -189,6 +189,8 @@ export const kycApproveController = async (req, res) => {
 
         // ── Set KYC status ────────────────────────────────────────────────────
         manufacturer.kycStatus = 'APPROVED';
+        manufacturer.rejectionReason = null;
+        manufacturer.verifiedAt = new Date();
         await manufacturer.save();
 
         console.log(`[manufacturer-service Auth] KYC approved: ${manufacturer.manufacturerId}`);
@@ -200,9 +202,190 @@ export const kycApproveController = async (req, res) => {
             companyName:    manufacturer.companyName,
             kycStatus:      'APPROVED',
             keyGenerated,
+            verifiedAt:     manufacturer.verifiedAt,
         });
     } catch (error) {
         console.error('[manufacturer-service Auth] kycApproveController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// ── KYC Reject — POST /api/manufacturer/auth/kyc/reject ───────────────────────
+export const kycRejectController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { manufacturerId, email, reason } = req.body;
+        if (!manufacturerId && !email) {
+            return res.status(400).json({ status: 'error', message: 'manufacturerId or email is required' });
+        }
+
+        const query = manufacturerId ? { manufacturerId } : { email: email.toLowerCase() };
+        const manufacturer = await Manufacturer.findOne(query);
+
+        if (!manufacturer) {
+            return res.status(404).json({ status: 'error', message: 'Manufacturer not found' });
+        }
+
+        manufacturer.kycStatus = 'REJECTED';
+        manufacturer.rejectionReason = reason || 'KYC application rejected by regulatory authority.';
+        await manufacturer.save();
+
+        console.log(`[manufacturer-service Auth] KYC rejected: ${manufacturer.manufacturerId}`);
+
+        return res.status(200).json({
+            status:          'success',
+            message:         `${manufacturer.companyName} registration rejected.`,
+            manufacturerId:  manufacturer.manufacturerId,
+            companyName:     manufacturer.companyName,
+            kycStatus:       'REJECTED',
+            rejectionReason: manufacturer.rejectionReason,
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Auth] kycRejectController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// ── Internal List — GET /api/manufacturer/internal/list ───────────────────────
+export const internalListController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { status, search, page = 1, limit = 10 } = req.query;
+        const query = {};
+
+        if (status && status.toUpperCase() !== 'ALL') {
+            query.kycStatus = status.toUpperCase();
+        }
+
+        if (search) {
+            const regex = new RegExp(search.trim(), 'i');
+            query.$or = [
+                { companyName: regex },
+                { licenseNumber: regex },
+                { email: regex },
+                { manufacturerId: regex },
+            ];
+        }
+
+        const pageNum  = Math.max(1, parseInt(page, 10) || 1);
+        const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
+        const skip     = (pageNum - 1) * limitNum;
+
+        const [records, total] = await Promise.all([
+            Manufacturer.find(query)
+                .select('-passwordHash')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limitNum)
+                .lean(),
+            Manufacturer.countDocuments(query),
+        ]);
+
+        const data = records.map(r => ({
+            ...r,
+            hasSigningKey: !!r.publicKeyPem,
+        }));
+
+        return res.status(200).json({
+            status: 'success',
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total,
+                totalPages: Math.ceil(total / limitNum),
+            },
+            data,
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Auth] internalListController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// ── Internal Detail — GET /api/manufacturer/internal/:id ──────────────────────
+export const internalDetailController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const { id } = req.params;
+        const manufacturer = await Manufacturer.findOne({
+            $or: [{ manufacturerId: id }, { email: id.toLowerCase() }],
+        }).select('-passwordHash').lean();
+
+        if (!manufacturer) {
+            return res.status(404).json({ status: 'error', message: 'Manufacturer not found' });
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                ...manufacturer,
+                hasSigningKey: !!manufacturer.publicKeyPem,
+            },
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Auth] internalDetailController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// ── Internal Stats — GET /api/manufacturer/internal/stats ─────────────────────
+export const internalStatsController = async (req, res) => {
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ status: 'error', message: 'Admin token not configured on server' });
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (!presented || presented !== ADMIN_TOKEN) {
+        return res.status(401).json({ status: 'error', code: 'UNAUTHORIZED', message: 'Invalid or missing X-Admin-Token' });
+    }
+
+    try {
+        const [total, pending, approved, rejected] = await Promise.all([
+            Manufacturer.countDocuments({}),
+            Manufacturer.countDocuments({ kycStatus: 'PENDING' }),
+            Manufacturer.countDocuments({ kycStatus: 'APPROVED' }),
+            Manufacturer.countDocuments({ kycStatus: 'REJECTED' }),
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                total,
+                pending,
+                approved,
+                rejected,
+            },
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Auth] internalStatsController error:', error.message);
         return res.status(500).json({ status: 'error', message: error.message });
     }
 };
@@ -216,3 +399,4 @@ export const logoutController = (_req, res) => {
     });
     return res.status(204).send();
 };
+

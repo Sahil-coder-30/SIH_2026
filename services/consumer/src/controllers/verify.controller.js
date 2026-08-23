@@ -19,6 +19,8 @@ const mapStatusToUiState = (blockchainStatus) => {
         case 'Sold':      return UI_STATE.ALREADY_SOLD;
         case 'AtShop':    return UI_STATE.AT_SHOP;
         case 'Packaged':  return UI_STATE.GENUINE;
+        case 'MINTED':    return UI_STATE.GENUINE;
+        case 'UNKNOWN':   return UI_STATE.GENUINE;
         case 'NOT_FOUND': return UI_STATE.NOT_FOUND;
         default:          return UI_STATE.NOT_FOUND;
     }
