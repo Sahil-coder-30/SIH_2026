@@ -64,3 +64,12 @@ spec:
             secretKeyRef:
               name: auth-secret
               key: SHOPKEEPER_JWT_SECRET
+        # ── Admin token — guards POST /api/shopkeeper/auth/kyc/approve ──────────
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: ADMIN_TOKEN
+        # ── Manufacturer service URL — for fetching medicine names on intake ────
+        - name: MANUFACTURER_SERVICE_URL
+          value: "http://manufacturer-service:80"

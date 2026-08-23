@@ -79,6 +79,32 @@ spec:
             secretKeyRef:
               name: crypto-secret
               key: CORE_RSA_PUBLIC_KEY
+        # ── AWS S3 — QR CSV artifact storage ──────────────────────────────────
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: AWS_REGION
+        - name: S3_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: S3_BUCKET_NAME
+        - name: S3_URL_EXPIRY_SECONDS
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: S3_URL_EXPIRY_SECONDS
         volumeMounts:
         - name: keystore-vol
           mountPath: /data
@@ -86,3 +112,16 @@ spec:
       - name: keystore-vol
         persistentVolumeClaim:
           claimName: pharma-core-keystore-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pharma-core-keystore-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+

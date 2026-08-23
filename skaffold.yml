@@ -9,7 +9,16 @@ build:
   tagPolicy:
     sha256: {}
   artifacts:
-    # ── 1. Manufacturer Service ─────────────────────────────────────────────
+    # ── 1. Pharma Core Crypto Vault ─────────────────────────────────────────
+    - image: pharma-core-service
+      context: services/pharma-core
+      docker:
+        dockerfile: dockerfile
+      sync:
+        infer:
+          - "src/**"
+
+    # ── 2. Manufacturer Service ─────────────────────────────────────────────
     - image: manufacturer-service
       context: services/manufacturer
       docker:
@@ -18,7 +27,7 @@ build:
         infer:
           - "src/**"
 
-    # ── 2. Shopkeeper Service ───────────────────────────────────────────────
+    # ── 3. Shopkeeper Service ───────────────────────────────────────────────
     - image: shopkeeper-service
       context: services/shopkeeper
       docker:
@@ -27,18 +36,9 @@ build:
         infer:
           - "src/**"
 
-    # ── 3. Consumer Service ─────────────────────────────────────────────────
+    # ── 4. Consumer Service ─────────────────────────────────────────────────
     - image: consumer-service
       context: services/consumer
-      docker:
-        dockerfile: dockerfile
-      sync:
-        infer:
-          - "src/**"
-
-    # ── 4. Pharma Core Crypto Vault ─────────────────────────────────────────
-    - image: pharma-core-service
-      context: services/pharma-core
       docker:
         dockerfile: dockerfile
       sync:
@@ -48,10 +48,6 @@ build:
 manifests:
   rawYaml:
     - k8s/secrets.yml
-    - k8s/manufacturer-db.deployment.yml
-    - k8s/manufacturer-db.service.yml
-    - k8s/shopkeeper-db.deployment.yml
-    - k8s/shopkeeper-db.service.yml
     - k8s/pharma-core.deployment.yml
     - k8s/pharma-core.service.yml
     - k8s/manufacturer.deployment.yml
@@ -64,7 +60,18 @@ manifests:
 
 portForward:
   - resourceType: service
-    resourceName: ingress-nginx-controller
-    namespace: ingress-nginx
+    resourceName: pharma-core-service
     port: 80
-    localPort: 80
+    localPort: 4000
+  - resourceType: service
+    resourceName: manufacturer-service
+    port: 80
+    localPort: 3001
+  - resourceType: service
+    resourceName: shopkeeper-service
+    port: 80
+    localPort: 3002
+  - resourceType: service
+    resourceName: consumer-service
+    port: 80
+    localPort: 3003

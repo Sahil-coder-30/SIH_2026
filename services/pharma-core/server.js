@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
-import app from './app/app.js';
-import { initKeystore } from './config/keystore.js';
-import { initKeys } from './config/keys.js';
+import app from './src/app/app.js';
+import { initKeystore } from './src/config/keystore.js';
+import { initKeys } from './src/config/keys.js';
 
 dotenv.config();
 

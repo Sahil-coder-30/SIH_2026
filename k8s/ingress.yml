@@ -22,7 +22,7 @@ spec:
             port:
               number: 80
 
-      # ── Shopkeeper Service Route ────────────────────────────────────────────
+      # ── Shopkeeper Service Routes ───────────────────────────────────────────
       - pathType: Prefix
         path: "/api/shopkeeper"
         backend:
@@ -30,6 +30,23 @@ spec:
             name: shopkeeper-service
             port:
               number: 80
+
+      - pathType: Prefix
+        path: "/api/medicine"
+        backend:
+          service:
+            name: shopkeeper-service
+            port:
+              number: 80
+
+      - pathType: Prefix
+        path: "/api/v1"
+        backend:
+          service:
+            name: shopkeeper-service
+            port:
+              number: 80
+
 
       # ── Consumer Service Route ──────────────────────────────────────────────
       - pathType: Prefix
@@ -40,12 +57,31 @@ spec:
             port:
               number: 80
 
-      # ── Public JWKS Discovery Route (for external standalone blockchain backend) ─
-      - pathType: Prefix
+      # ── Public JWKS Discovery Routes ────────────────────────────────────────
+      - pathType: ImplementationSpecific
         path: "/.well-known"
         backend:
           service:
             name: pharma-core-service
             port:
               number: 80
+
+      - pathType: ImplementationSpecific
+        path: "/jwks.json"
+        backend:
+          service:
+            name: pharma-core-service
+            port:
+              number: 80
+
+      # ── Pharma Core Internal/Direct Route ───────────────────────────────────
+      - pathType: Prefix
+        path: "/core"
+        backend:
+          service:
+            name: pharma-core-service
+            port:
+              number: 80
+
+
 

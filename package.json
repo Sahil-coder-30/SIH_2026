@@ -1,0 +1,27 @@
+{
+  "name": "sih_2026",
+  "version": "1.0.0",
+  "description": "[![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg?logo=node.js)](https://nodejs.org/) [![Docker](https://img.shields.io/badge/Docker-Containerized-blue.svg?logo=docker)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-Ingress%20Orchestrated-326ce5.svg?logo=kubernetes)](https://kubernetes.io/) [![Cryptography](https://img.shields.io/badge/Cryptography-ECDSA%20P--256%20%7C%20ES256-red.svg)](https://en.wikipedia.org/wiki/Elliptic_Curve_Digital_Signature_Algorithm) [![Encryption](https://img.shields.io/badge/Encryption-AES--256--GCM%20%7C%20scrypt-orange.svg)](https://en.wikipedia.org/wiki/Galois/Counter_Mode) [![Blockchain](https://img.shields.io/badge/Blockchain-Hyperledger%20Fabric-2F3134.svg?logo=hyperledger)](https://www.hyperledger.org/projects/fabric) [![License](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node tests/comprehensive_e2e_api_suite.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sahil-coder-30/SIH_2026.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Sahil-coder-30/SIH_2026/issues"
+  },
+  "homepage": "https://github.com/Sahil-coder-30/SIH_2026#readme",
+  "dependencies": {
+    "axios": "^1.19.0"
+  }
+}

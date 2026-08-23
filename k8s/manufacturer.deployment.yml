@@ -64,3 +64,9 @@ spec:
             secretKeyRef:
               name: auth-secret
               key: MANUFACTURER_JWT_SECRET
+        # ── Admin token — guards POST /api/manufacturer/auth/kyc/approve ───────
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: ADMIN_TOKEN
