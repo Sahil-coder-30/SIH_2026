@@ -56,7 +56,7 @@ const readCsvContent = async (batchId, s3FileKey) => {
     if (isS3Configured() && s3FileKey && !s3FileKey.startsWith('local:')) {
         // ── Fetch from S3 ─────────────────────────────────────────────────────
         const s3 = new S3Client({
-            region:      process.env.AWS_REGION || 'ap-south-1',
+            region:      process.env.AWS_REGION || 'us-east-1',
             credentials: {
                 accessKeyId:     process.env.AWS_ACCESS_KEY_ID,
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,

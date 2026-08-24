@@ -29,14 +29,14 @@ const getS3Client = () => {
     }
 
     _s3Client = new S3Client({
-        region:      AWS_REGION || 'ap-south-1',
+        region:      AWS_REGION || 'us-east-1',
         credentials: {
             accessKeyId:     AWS_ACCESS_KEY_ID,
             secretAccessKey: AWS_SECRET_ACCESS_KEY,
         },
     });
 
-    console.log('[pharma-core S3] S3Client initialized — region:', AWS_REGION || 'ap-south-1');
+    console.log('[pharma-core S3] S3Client initialized — region:', AWS_REGION || 'us-east-1');
     return _s3Client;
 };
 
