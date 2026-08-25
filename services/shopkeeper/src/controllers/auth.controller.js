@@ -41,12 +41,29 @@ export const registerController = async (req, res) => {
             licenseDocument, password,
         } = req.body;
 
+        const effectiveShopEmail   = (shopEmail || ownerEmail || '').toLowerCase().trim();
+        const effectiveOwnerEmail  = (ownerEmail || shopEmail || '').toLowerCase().trim();
+        const effectiveShopPhone   = (shopPhone || ownerPhone || '').trim();
+        const effectiveOwnerPhone  = (ownerPhone || shopPhone || '').trim();
+        const effectiveLicenseType = licenseType || 'retail';
+        const effectiveAuthority   = issuingAuthority || 'State Drug Control Department';
+        const effectiveIssueDate   = licenseIssueDate || new Date().toISOString();
+        const effectiveExpiryDate  = licenseExpiryDate || new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000).toISOString();
+
         // ── Required field validation
         const required = {
-            shopName, shopPhone, shopEmail, address, city, state, pincode,
-            ownerName, ownerPhone, ownerEmail,
-            drugLicenseNumber, licenseType, issuingAuthority,
-            licenseIssueDate, licenseExpiryDate, password,
+            shopName,
+            shopPhone: effectiveShopPhone,
+            shopEmail: effectiveShopEmail,
+            address,
+            city,
+            state,
+            pincode,
+            ownerName,
+            ownerPhone: effectiveOwnerPhone,
+            ownerEmail: effectiveOwnerEmail,
+            drugLicenseNumber,
+            password,
         };
         const missing = Object.entries(required).filter(([, v]) => !v).map(([k]) => k);
         if (missing.length) {
@@ -61,14 +78,11 @@ export const registerController = async (req, res) => {
         }
 
         // ── Duplicate check
-        const emailLower     = ownerEmail.toLowerCase().trim();
-        const shopEmailLower = shopEmail.toLowerCase().trim();
-
         const existing = await Shopkeeper.findOne({
             $or: [
-                { 'authentication.email': emailLower },
+                { 'authentication.email': effectiveOwnerEmail },
                 { 'license.drugLicenseNumber': drugLicenseNumber.trim() },
-                { 'shop.email': shopEmailLower },
+                { 'shop.email': effectiveShopEmail },
             ],
         });
 
@@ -85,15 +99,15 @@ export const registerController = async (req, res) => {
 
         const shopkeeper = await Shopkeeper.create({
             shopId,
-            authentication: { email: emailLower, phone: ownerPhone.trim(), passwordHash },
-            shop:  { name: shopName, phone: shopPhone, email: shopEmailLower, address, city, state, pincode },
-            owner: { name: ownerName, phone: ownerPhone, email: emailLower },
+            authentication: { email: effectiveOwnerEmail, phone: effectiveOwnerPhone, passwordHash },
+            shop:  { name: shopName, phone: effectiveShopPhone, email: effectiveShopEmail, address, city, state, pincode },
+            owner: { name: ownerName, phone: effectiveOwnerPhone, email: effectiveOwnerEmail },
             license: {
                 drugLicenseNumber: drugLicenseNumber.trim(),
-                licenseType,
-                issuingAuthority,
-                issueDate:  new Date(licenseIssueDate),
-                expiryDate: new Date(licenseExpiryDate),
+                licenseType: effectiveLicenseType,
+                issuingAuthority: effectiveAuthority,
+                issueDate:  new Date(effectiveIssueDate),
+                expiryDate: new Date(effectiveExpiryDate),
                 documentUrl: null,
                 documentMeta: licenseDocument
                     ? { name: licenseDocument.name, size: licenseDocument.size, mimeType: licenseDocument.mimeType }
