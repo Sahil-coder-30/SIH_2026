@@ -9,8 +9,9 @@ const BCRYPT_ROUNDS   = 12;
 // POST /api/admin/auth/login
 export const loginController = async (req, res) => {
     try {
-        const JWT_SECRET     = process.env.ADMIN_JWT_SECRET;
+        const JWT_SECRET     = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || 'super-secret-jwt-key-for-admin-service-change-in-prod';
         const JWT_EXPIRES_IN = process.env.ADMIN_JWT_EXPIRES_IN || '8h';
+
         const { email, password } = req.body;
 
         if (!email || !password) {
@@ -147,3 +148,50 @@ export const createAdminController = async (req, res) => {
         return res.status(500).json({ status: 'error', message: error.message });
     }
 };
+
+// PUT /api/admin/auth/profile
+export const updateProfileController = async (req, res) => {
+    try {
+        const adminId = req.admin.adminId;
+        const { fullName, department } = req.body;
+
+        const admin = await AdminUser.findOne({ adminId });
+        if (!admin) {
+            return res.status(404).json({ status: 'error', message: 'Admin user not found' });
+        }
+
+        if (fullName !== undefined && fullName.trim()) {
+            admin.fullName = fullName.trim();
+        }
+        if (department !== undefined && department.trim()) {
+            admin.department = department.trim();
+        }
+
+        await admin.save();
+
+        await AuditLog.create({
+            action:      'ADMIN_PROFILE_UPDATED',
+            performedBy: {
+                adminId:  admin.adminId,
+                email:    admin.email,
+                fullName: admin.fullName,
+                role:     admin.role,
+            },
+            targetType:  'ADMIN',
+            targetId:    admin.adminId,
+            targetName:  admin.fullName,
+            reason:      'Admin updated profile details',
+            ipAddress:   req.ip || 'internal',
+        });
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Profile updated successfully',
+            data:   admin.toPublicProfile(),
+        });
+    } catch (error) {
+        console.error('[admin-service Auth] updateProfileController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+

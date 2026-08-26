@@ -3,9 +3,11 @@
  * Starts all PharmaChain microservices locally concurrently in one command.
  */
 
+import 'dotenv/config';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,9 +34,10 @@ services.forEach(svc => {
 
     const child = spawn('node', ['server.js'], {
         cwd,
-        env: { ...process.env },
+        env: { ...process.env, PORT: String(svc.port) },
         stdio: ['ignore', 'pipe', 'pipe'],
     });
+
 
     child.stdout.on('data', data => {
         const lines = data.toString().trim().split('\n');

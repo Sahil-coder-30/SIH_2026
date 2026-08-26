@@ -1,6 +1,10 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
 
 import authRouter from '../routes/auth.routes.js';
 import shopkeeperRouter from '../routes/shopkeeper.routes.js';

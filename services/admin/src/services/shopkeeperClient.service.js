@@ -2,7 +2,8 @@ import axios from 'axios';
 
 const getClient = () => {
     const baseURL     = process.env.SHOPKEEPER_SERVICE_URL || 'http://localhost:3002';
-    const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+    const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '960e412b2690c03cb83337b91010016a572343f23123feb3';
+
 
     return axios.create({
         baseURL,

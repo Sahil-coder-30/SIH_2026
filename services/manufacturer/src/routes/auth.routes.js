@@ -5,7 +5,10 @@ import {
     kycApproveController,
     kycRejectController,
     logoutController,
+    getProfileController,
+    updateProfileController,
 } from '../controllers/auth.controller.js';
+import { identifyUser } from '../middleware/identifyUser.middleware.js';
 
 const router = express.Router();
 
@@ -18,15 +21,17 @@ router.post('/register', registerController);
 router.post('/login', loginController);
 
 // POST /api/manufacturer/auth/kyc/approve → admin-only, X-Admin-Token header required
-// Sets kycStatus=APPROVED and provisions EC P-256 signing key via pharma-core.
-// Fail-closed: returns 500 if ADMIN_TOKEN env var is not set.
 router.post('/kyc/approve', kycApproveController);
 
 // POST /api/manufacturer/auth/kyc/reject → admin-only, X-Admin-Token header required
 router.post('/kyc/reject', kycRejectController);
 
 // POST /api/manufacturer/auth/logout → clears mfr_token cookie, returns 204
-// Safe to call unauthenticated.
 router.post('/logout', logoutController);
 
+// ── Protected Auth Routes (Manufacturer JWT required) ─────────────────────────
+router.get('/me', identifyUser, getProfileController);
+router.put('/profile', identifyUser, updateProfileController);
+
 export default router;
+

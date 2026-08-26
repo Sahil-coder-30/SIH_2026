@@ -4,6 +4,7 @@ import {
     getMeController,
     logoutController,
     createAdminController,
+    updateProfileController,
 } from '../controllers/auth.controller.js';
 import { requireAdminAuth } from '../middleware/adminAuth.middleware.js';
 import { requireRoles } from '../middleware/roleCheck.middleware.js';
@@ -16,6 +17,8 @@ router.post('/logout', logoutController);
 
 // Protected
 router.get('/me', requireAdminAuth, getMeController);
+router.put('/profile', requireAdminAuth, updateProfileController);
 router.post('/create-admin', requireAdminAuth, requireRoles('SUPERADMIN'), createAdminController);
 
 export default router;
+

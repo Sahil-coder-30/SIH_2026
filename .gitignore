@@ -1,40 +1,71 @@
-# ── Node.js & Dependencies ───────────────────────────────────────────────────
+# ==============================================================================
+# PharmaChain Backend (SIH_2026) .gitignore
+# Secure Backend Secrets, Encryption Keys, Keystores & Production Dumps
+# ==============================================================================
+
+# ── 1. Node.js & Dependencies ──────────────────────────────────────────────────
 node_modules/
+**/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+logs/
 
-# ── Environment & Secrets — NEVER commit real secrets ────────────────────────
+# ── 2. Environment & Secrets — NEVER commit real secrets ────────────────────────
 .env
 .env.*
 *.env
-!.env.example
+**/.env
+**/.env.*
 services/*/.env
 services/*/.env.*
+!*.env.example
+!**/.env.example
 !services/*/.env.example
 
-# ── Kubernetes Secrets ────────────────────────────────────────────────────────
+# Service tokens & cloud credentials
+*credentials*.json
+service-account*.json
+firebase-adminsdk*.json
+
+# ── 3. Kubernetes & Infra Secrets ──────────────────────────────────────────────
 k8s/secrets.yml
 k8s/*.secret.yml
 !k8s/secrets.yml.example
 
-# ── Crypto Data & Private Keys ────────────────────────────────────────────────
+# ── 4. Cryptographic Key Vault, Keystores & S3 Local Pipeline Exports ──────────
 services/pharma-core/data/
+services/pharma-core/data/exports/
+services/pharma-core/data/keystore.json
 services/pharma-core/config/rsa/pharma-core-private.pem
+services/pharma-core/config/rsa/*-private.pem
 *.pem
-!services/pharma-core/config/rsa/pharma-core-public.pem
 *.key
 *.keystore
+*.jks
+*.p12
+*.p8
+*.pkcs12
+*.cer
+*.crt
+*.der
+!services/pharma-core/config/rsa/pharma-core-public.pem
 
-# ── Build & Cache Artifacts ──────────────────────────────────────────────────
+# Generated batch QR codes & CSV exports
+data/
+data/exports/
+*.csv
+!tests/fixtures/*.csv
+
+# ── 5. Build & Test Coverage ───────────────────────────────────────────────────
 dist/
 build/
 coverage/
 .nyc_output/
 
-# ── OS Artifacts ──────────────────────────────────────────────────────────────
+# ── 6. OS & IDE Artifacts ──────────────────────────────────────────────────────
 .DS_Store
 .DS_Store?
 ._*
@@ -42,13 +73,15 @@ coverage/
 .Trashes
 Thumbs.db
 ehthumbs.db
+[Dd]esktop.ini
 
-# ── IDEs & Agent Workspace Artifacts ──────────────────────────────────────────
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 *.swp
 *.swo
 *~
 .agents/
 .gemini/
-
+scratch/
