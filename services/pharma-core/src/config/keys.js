@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_PRIVATE_KEY_PATH = path.resolve('./config/rsa/pharma-core-private.pem');
@@ -15,11 +16,7 @@ let _publicKeyPem  = null;
 
 /**
  * Loads the pharma-core RSA-4096 keypair into memory.
- *
- * Loading Priority:
- *   1. Environment variables: CORE_RSA_PRIVATE_KEY & CORE_RSA_PUBLIC_KEY (from K8s Secret)
- *   2. File paths: CORE_PRIVATE_KEY_PATH & CORE_PUBLIC_KEY_PATH (from disk or mounted volume)
- *   3. Default local paths: ./config/rsa/pharma-core-{private,public}.pem
+ * Auto-generates local RSA keys if not present on disk.
  *
  * @returns {Promise<void>}
  */
@@ -29,7 +26,7 @@ export const initKeys = async () => {
         if (process.env.CORE_RSA_PRIVATE_KEY && process.env.CORE_RSA_PUBLIC_KEY) {
             _privateKeyPem = process.env.CORE_RSA_PRIVATE_KEY.replace(/\\n/g, '\n');
             _publicKeyPem  = process.env.CORE_RSA_PUBLIC_KEY.replace(/\\n/g, '\n');
-            console.log('[pharma-core Keys] RSA-4096 keypair loaded from environment variables');
+            console.log('[pharma-core Keys] RSA keypair loaded from environment variables');
             return;
         }
 
@@ -37,18 +34,34 @@ export const initKeys = async () => {
         const privPath = process.env.CORE_PRIVATE_KEY_PATH || DEFAULT_PRIVATE_KEY_PATH;
         const pubPath  = process.env.CORE_PUBLIC_KEY_PATH  || DEFAULT_PUBLIC_KEY_PATH;
 
-        _privateKeyPem = await fs.readFile(privPath, 'utf-8');
-        _publicKeyPem  = await fs.readFile(pubPath,  'utf-8');
+        try {
+            _privateKeyPem = await fs.readFile(privPath, 'utf-8');
+            _publicKeyPem  = await fs.readFile(pubPath,  'utf-8');
+            console.log('[pharma-core Keys] RSA keypair loaded from file paths');
+        } catch {
+            console.log('[pharma-core Keys] RSA key files not found on disk, auto-generating fresh keypair...');
+            const rsaDir = path.dirname(privPath);
+            await fs.mkdir(rsaDir, { recursive: true });
 
-        console.log('[pharma-core Keys] RSA-4096 keypair loaded from file paths');
-        console.log(`[pharma-core Keys]   private: ${privPath}`);
-        console.log(`[pharma-core Keys]   public:  ${pubPath}`);
+            const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+                modulusLength: 2048,
+                publicKeyEncoding:  { type: 'spki', format: 'pem' },
+                privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+            });
+
+            await fs.writeFile(privPath, privateKey, 'utf-8');
+            await fs.writeFile(pubPath, publicKey, 'utf-8');
+
+            _privateKeyPem = privateKey;
+            _publicKeyPem = publicKey;
+            console.log('[pharma-core Keys] Generated & saved RSA keypair to:', privPath);
+        }
     } catch (error) {
         console.error('[pharma-core Keys] FATAL: Could not load RSA keypair:', error.message);
-        console.error('[pharma-core Keys] Ensure CORE_RSA_PRIVATE_KEY/CORE_RSA_PUBLIC_KEY env vars are set, or files exist in config/rsa/');
         process.exit(1);
     }
 };
+
 
 /**
  * Returns the in-memory RSA private key PEM (loaded at startup).

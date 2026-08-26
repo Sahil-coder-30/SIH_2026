@@ -151,7 +151,6 @@ export const createBatchController = async (req, res) => {
 
         const totalQuantity = rawQty;
 
-
         const qty = parseInt(totalQuantity, 10);
         if (isNaN(qty) || qty < MIN_QUANTITY || qty > MAX_QUANTITY) {
             return res.status(400).json({
@@ -159,6 +158,23 @@ export const createBatchController = async (req, res) => {
                 message: `totalQuantity must be between ${MIN_QUANTITY} and ${MAX_QUANTITY.toLocaleString()} (1 lakh)`,
             });
         }
+
+        // ── Date Validation ─────────────────────────────────────────────────
+        const mfrDateObj = new Date(manufacturingDate);
+        const expDateObj = new Date(expiryDate);
+        if (isNaN(mfrDateObj.getTime()) || isNaN(expDateObj.getTime())) {
+            return res.status(400).json({
+                code:    'INVALID_DATE_FORMAT',
+                message: 'manufacturingDate and expiryDate must be valid date strings',
+            });
+        }
+        if (expDateObj <= mfrDateObj) {
+            return res.status(400).json({
+                code:    'INVALID_EXPIRY_DATE',
+                message: 'expiryDate must be strictly after manufacturingDate',
+            });
+        }
+
 
         // ── Dual Batch ID Resolution ─────────────────────────────────────────
         // 1. Manufacturer's custom / legacy internal batch number (e.g. "AUG625-2026-01")
@@ -417,7 +433,23 @@ export const mintBatchController = async (req, res) => {
             });
         }
 
+        // ── Quality & Compliance Guards ─────────────────────────────────────────
+        if (new Date(batch.expiryDate) < new Date()) {
+            return res.status(400).json({
+                code:    'BATCH_EXPIRED',
+                message: `Cannot mint batch ${batchId}: The batch expiry date (${batch.expiryDate.toISOString().split('T')[0]}) has already passed.`,
+            });
+        }
+
+        if (batch.microbialTestStatus === 'FAIL' || batch.dissolutionTestStatus === 'FAIL') {
+            return res.status(400).json({
+                code:    'QA_TEST_FAILED',
+                message: `Cannot mint batch ${batchId}: Quality assurance test failure recorded (Microbial: ${batch.microbialTestStatus || 'N/A'}, Dissolution: ${batch.dissolutionTestStatus || 'N/A'}).`,
+            });
+        }
+
         if (_mintingJobs.has(batch.batchId)) {
+
             const job = _mintingJobs.get(batch.batchId);
             return res.status(409).json({
                 code:        'MINT_ALREADY_RUNNING',

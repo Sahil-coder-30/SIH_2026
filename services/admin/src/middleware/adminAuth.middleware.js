@@ -3,8 +3,9 @@ import AdminUser from '../models/adminUser.model.js';
 
 export const requireAdminAuth = async (req, res, next) => {
     try {
-        const JWT_SECRET = process.env.ADMIN_JWT_SECRET;
+        const JWT_SECRET = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET || 'super-secret-jwt-key-for-admin-service-change-in-prod';
         if (!JWT_SECRET) {
+
             return res.status(500).json({ status: 'error', message: 'ADMIN_JWT_SECRET is not configured' });
         }
 

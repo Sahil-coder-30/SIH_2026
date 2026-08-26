@@ -11,6 +11,7 @@
     "test:full": "node tests/full_api_system_test.mjs",
     "test:s3": "node tests/s3_storage_test.mjs",
     "test:s3-fetch": "node tests/fetch_existing_s3_data_test.mjs",
+    "test:shopkeeper": "node tests/shopkeeper_frontends_test.mjs",
     "test:suite": "node tests/comprehensive_e2e_api_suite.mjs",
     "test:e2e": "node tests/e2e_integration_test.mjs",
     "test:admin": "node tests/admin_service_test.mjs",
@@ -32,6 +33,7 @@
   "homepage": "https://github.com/Sahil-coder-30/SIH_2026#readme",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",
-    "axios": "^1.19.0"
+    "axios": "^1.19.0",
+    "dotenv": "^17.4.2"
   }
 }

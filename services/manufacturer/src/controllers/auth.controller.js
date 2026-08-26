@@ -400,3 +400,58 @@ export const logoutController = (_req, res) => {
     return res.status(204).send();
 };
 
+// ── GET /api/manufacturer/auth/me ─────────────────────────────────────────────
+export const getProfileController = async (req, res) => {
+    try {
+        const manufacturerId = req.user.id;
+        const manufacturer = await Manufacturer.findOne({ manufacturerId });
+        if (!manufacturer) {
+            return res.status(404).json({ status: 'error', message: 'Manufacturer not found' });
+        }
+        return res.status(200).json({
+            status: 'success',
+            data: manufacturer.toPublicProfile(),
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Auth] getProfileController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+// ── PUT /api/manufacturer/auth/profile ─────────────────────────────────────────
+export const updateProfileController = async (req, res) => {
+    try {
+        const manufacturerId = req.user.id;
+        const { companyName, phone, address, city, state, pincode, website } = req.body;
+
+        const manufacturer = await Manufacturer.findOne({ manufacturerId });
+        if (!manufacturer) {
+            return res.status(404).json({ status: 'error', message: 'Manufacturer not found' });
+        }
+
+        if (companyName !== undefined && companyName.trim()) {
+            manufacturer.companyName = companyName.trim();
+        }
+        if (phone !== undefined)    manufacturer.phone = phone ? phone.trim() : null;
+        if (address !== undefined)  manufacturer.address = address ? address.trim() : null;
+        if (city !== undefined)     manufacturer.city = city ? city.trim() : null;
+        if (state !== undefined)    manufacturer.state = state ? state.trim() : null;
+        if (pincode !== undefined)  manufacturer.pincode = pincode ? pincode.trim() : null;
+        if (website !== undefined)  manufacturer.website = website ? website.trim() : null;
+
+        await manufacturer.save();
+
+        console.log(`[manufacturer-service Auth] Profile updated for: ${manufacturerId}`);
+
+        return res.status(200).json({
+            status:  'success',
+            message: 'Manufacturer profile updated successfully',
+            data:    manufacturer.toPublicProfile(),
+        });
+    } catch (error) {
+        console.error('[manufacturer-service Auth] updateProfileController error:', error.message);
+        return res.status(500).json({ status: 'error', message: error.message });
+    }
+};
+
+
